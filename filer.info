@@ -1,0 +1,9 @@
+name = Filer
+description = Simple file writing interface.
+package = wieni
+configure = admin/config/content/filer
+core = 7.x
+version = "0.0.1 pre-alpha"
+project = "filer"
+datestamp = "1365606004"
+

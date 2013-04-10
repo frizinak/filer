@@ -1,0 +1,47 @@
+<?php
+
+/**
+ * Implements hook_schema().
+ */
+function filer_schema() {
+  $schema = array();
+  $schema['filer'] = array(
+    'description' => 'Filer module table. Keeps track of generated files.',
+    'fields' => array(
+      'frid' => array(
+        'description' => 'Primary Key.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'id' => array(
+        'description' => 'Identifier.',
+        'type' => 'varchar',
+        'length' => '255'
+      ),
+      'callback' => array(
+        'description' => 'Path to file.',
+        'type' => 'varchar',
+        'length' => '255'
+      ),
+      'file' => array(
+        'description' => 'Path to file.',
+        'type' => 'varchar',
+        'length' => '255'
+      ),
+      'finished' => array(
+        'description' => 'Date the file was finished.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => NULL,
+      )
+    ),
+    'primary key' => array('frid'),
+    'indexes' => array(
+      'frid' => array('frid'),
+      'id' => array('id')
+    )
+  );
+  return $schema;
+}

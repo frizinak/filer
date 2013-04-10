@@ -1,0 +1,128 @@
+<?php
+define('FILER_CRON', 'filer:cron');
+
+/**
+ * Implements hook_cron_queue_info().
+ */
+function filer_cron_queue_info() {
+  $queues[FILER_CRON] = array(
+    'worker callback' => 'filer_cron_callback',
+    'time' => 1,
+  );
+
+  return $queues;
+}
+
+/**
+ * Main cron callback.
+ * This function will open the file and write the return value of the given callback function, if the return value is a string.
+ * Passes the provided data, file contents, the filehandle and a status indicator to the callback.
+ * Status indicator will be 'first', empty or 'last'.
+ */
+function filer_cron_callback($data) {
+  $filer = new Filer($data['id']);
+  $filer_rows = $filer->getData($data['frid']);
+  foreach ($filer_rows as $filer_row) {
+    $callback = $filer_row->callback;
+    break;
+  }
+  if (empty($callback) || !is_string($callback)) {
+    $filer->deleteRow($data['frid']);
+    watchdog('filer', 'Invalid data in filer table', $filer_rows);
+    return;
+  }
+  $fn = $data['filepath'];
+  $tmp_fn = $data['filepath'] . '.tmp';
+  if (!function_exists($callback)) {
+    watchdog('filer', 'callback function %func was not found', array('%func' => $callback));
+    return;
+  }
+  if (!$fh = fopen($tmp_fn, $data['fmode'])) {
+    watchdog('filer', 'could not open file: %file', array('%file' => $tmp_fn));
+    return;
+  }
+  $content = '';
+  if (!empty($data['read'])) {
+    clearstatcache(TRUE);
+    $content = fread($fh, filesize($tmp_fn));
+  }
+  $return = call_user_func($callback, $data['data'], $content, $fh, $data['status']);
+  if (is_string($return) && fwrite($fh, $return) === FALSE) {
+    watchdog('filer', 'could not write to %file', array('%file' => $tmp_fn));
+  }
+  fclose($fh);
+  if ($data['status'] === 'last') {
+    if (!rename($tmp_fn, $fn)) {
+      watchdog('filer', 'could not rename %file to %nfile', array('%file' => $tmp_fn, '%nfile' => $fn));
+    }
+    $filer->finish($data['frid']);
+  }
+}
+
+class Filer {
+
+  private $id;
+
+  public function __construct($id) {
+    if (!is_string($id)) {
+      throw new ErrorException('Filer::__construct($id) requires a string as first param.');
+    }
+    $this->id = $id;
+  }
+
+  public function add($filepath, $items, $callback, $filemode = 'a', $read = FALSE) {
+    $insert = array('id' => $this->id, 'callback' => $callback, 'file' => $filepath);
+    watchdog('', '', $this->id);
+    $frid = db_insert('filer')->fields($insert)->execute();
+    if (is_null($frid)) {
+      watchdog('filer', 'Could not insert row into filer table');
+      return FALSE;
+    }
+    $q = DrupalQueue::get(FILER_CRON);
+    $item_count = count($items);
+    $i = 0;
+    foreach ($items as $item) {
+      $i++;
+      $status = '';
+      if ($i == $item_count) {
+        $status = 'last';
+      }
+      elseif ($i == 1) {
+        $status = 'first';
+      }
+      $q->createItem(array(
+        'frid' => $frid,
+        'id' => $this->id,
+        'status' => $status,
+        'read' => $read,
+        'fmode' => $filemode,
+        'filepath' => $filepath,
+        'data' => $item
+      ));
+    }
+    return TRUE;
+  }
+
+  public function getFiles() {
+    return db_select('filer', 'f')->fields('file')->condition('f.id', $this->id)->execute()->fetchAllAssoc('finished');
+  }
+
+  public function getData($frid = NULL) {
+    $qry = db_select('filer', 'f');
+    $qry->fields('f', array('frid', 'id', 'callback', 'file', 'finished'));
+    $qry->condition('f.id', $this->id);
+    if (is_numeric($frid)) {
+      $qry->condition('f.frid', $frid);
+    }
+    return $qry->execute()->fetchAllAssoc('frid');
+  }
+
+  public function finish($frid) {
+    db_update('filer')->fields(array('finished' => time()))->condition('frid', $frid)->condition('id', $this->id)->execute();
+  }
+
+  public function deleteRow($frid) {
+    db_delete('filer')->condition('frid', $frid)->condition('id', $this->id)->execute();
+  }
+
+}
