@@ -7,7 +7,7 @@ define('FILER_CRON', 'filer:cron');
 function filer_cron_queue_info() {
   $queues[FILER_CRON] = array(
     'worker callback' => 'filer_cron_callback',
-    'time' => 1,
+    'time' => 30,
   );
 
   return $queues;
@@ -21,16 +21,14 @@ function filer_cron_queue_info() {
  */
 function filer_cron_callback($data) {
   $filer = new Filer($data['id']);
-  $filer_rows = $filer->getData($data['frid']);
-  foreach ($filer_rows as $filer_row) {
-    $callback = $filer_row->callback;
-    break;
-  }
-  if (empty($callback) || !is_string($callback)) {
+  $filer_row = $filer->getFiles($data['frid']);
+  if (!isset($filer_row['callback'])) {
     $filer->deleteRow($data['frid']);
-    watchdog('filer', 'Invalid data in filer table', $filer_rows);
+    watchdog('filer', 'Invalid data in filer table', $filer_row);
     return;
+
   }
+  $callback = $filer_row['callback'];
   $fn = $data['filepath'];
   $tmp_fn = $data['filepath'] . '.tmp';
   if (!function_exists($callback)) {
@@ -103,21 +101,39 @@ class Filer {
     return TRUE;
   }
 
-  public function getFiles() {
-    return db_select('filer', 'f')->fields('file')->condition('f.id', $this->id)->execute()->fetchAllAssoc('finished');
+  public function deleteFile($frid) {
+    $row = $this->getFiles($frid);
+    if (isset($row['file']) && unlink($row['file'])) {
+      $this->deleteRow($frid);
+      return TRUE;
+    }
+    return FALSE;
   }
 
-  public function getData($frid = NULL) {
+  public function getFiles($frid = NULL, $path = NULL) {
     $qry = db_select('filer', 'f');
     $qry->fields('f', array('frid', 'id', 'callback', 'file', 'finished'));
     $qry->condition('f.id', $this->id);
     if (is_numeric($frid)) {
       $qry->condition('f.frid', $frid);
     }
-    return $qry->execute()->fetchAllAssoc('frid');
+    if (is_string($path)) {
+      $qry->condition('f.file', $path);
+    }
+    $result = $qry->execute();
+    if (!is_null($frid)) {
+      return $result->fetchAssoc();
+    }
+    else {
+      return $result->fetchAllAssoc('frid');
+    }
   }
 
   public function finish($frid) {
+    $row = $this->getFiles($frid);
+    if (!empty($row)) {
+      db_delete('filer')->isNotNull('finished')->condition('file', $row['file'])->execute();
+    }
     db_update('filer')->fields(array('finished' => time()))->condition('frid', $frid)->condition('id', $this->id)->execute();
   }
 
