@@ -61,14 +61,36 @@ class Filer {
 
   private $id;
 
+  /**
+   * @param $id String  Arbitrary string used to differentiate between Filer data.
+   * @throws ErrorException when $id is not a non-empty string
+   */
   public function __construct($id) {
-    if (!is_string($id)) {
-      throw new ErrorException('Filer::__construct($id) requires a string as first param.');
+    if (!is_string($id) || empty($id)) {
+      throw new ErrorException('Filer::__construct($id) requires a non-empty string as first param.');
     }
     $this->id = $id;
   }
 
+  /**
+   * Add new filer task.
+   *
+   * @param   $filepath   String    Absolute filepath.
+   * @param   $items      Array     Array of items, each item is passed to the given callback function.
+   * @param   $callback   String    Reference to a function, called for each item in $items.
+   * @param   $filemode   String    @see http://php.net/manual/en/function.fopen.php: mode.
+   * @param   $read       bool      Whether to read the file and pass the contents to $callback.
+   * @return              bool      FALSE on failure
+   */
   public function add($filepath, $items, $callback, $filemode = 'a', $read = FALSE) {
+    $fmstrlen = strlen($filemode);
+    if (!in_array(substr($filemode, 0, 1), array('r', 'w', 'a', 'x', 'c')) || !in_array(substr($filemode, 1, 1), array('+', '')) || $fmstrlen > 2 || $fmstrlen == 0) {
+      watchdog('filer', 'Invalid filemode given');
+      return FALSE;
+    }
+    if ($read && $fmstrlen == 1 && in_array($filemode, array('a', 'w', 'x', 'c'))) {
+      $filemode .= '+';
+    }
     $insert = array('id' => $this->id, 'callback' => $callback, 'file' => $filepath);
     watchdog('', '', $this->id);
     $frid = db_insert('filer')->fields($insert)->execute();
@@ -101,6 +123,12 @@ class Filer {
     return TRUE;
   }
 
+  /**
+   * Unlink file from filesystem and delete from db if successful.
+   *
+   * @param   $frid   Int   FilerFileId.
+   * @return          bool  FALSE on failure.
+   */
   public function deleteFile($frid) {
     $row = $this->getFiles($frid);
     if (isset($row['file']) && unlink($row['file'])) {
@@ -110,6 +138,13 @@ class Filer {
     return FALSE;
   }
 
+  /**
+   * Get all FilerFile rows. Filtering out those not matching given $frid or/and $path.
+   *
+   * @param   $frid   Int     FilerFileId.
+   * @param   $path   String  Absolute path to the file.
+   * @return          mixed
+   */
   public function getFiles($frid = NULL, $path = NULL) {
     $qry = db_select('filer', 'f');
     $qry->fields('f', array('frid', 'id', 'callback', 'file', 'finished'));
@@ -129,6 +164,13 @@ class Filer {
     }
   }
 
+  /**
+   * Internal filer function!
+   * Sets filetask to finished.
+   *
+   * @param   $frid   Int   FilerFileId.
+   * @private
+   */
   public function finish($frid) {
     $row = $this->getFiles($frid);
     if (!empty($row)) {
@@ -137,6 +179,13 @@ class Filer {
     db_update('filer')->fields(array('finished' => time()))->condition('frid', $frid)->condition('id', $this->id)->execute();
   }
 
+  /**
+   * Internal filer function!
+   * Deletes one or more rows from the filer table.
+   *
+   * @param   $frid   Int   FilerFileId.
+   * @private
+   */
   public function deleteRow($frid) {
     db_delete('filer')->condition('frid', $frid)->condition('id', $this->id)->execute();
   }
