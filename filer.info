@@ -1,5 +1,7 @@
 name = Filer
 description = Simple file writing interface.
+; Feel free to remove or change the package identifier.
+; We like to keep our own modules together.
 package = wieni
 configure = admin/config/content/filer
 files[] = filer.class.php

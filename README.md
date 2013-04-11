@@ -42,3 +42,5 @@ foreach($f->getFiles() as $file){
 
 
 ```
+
+Thanks to [wieni](http://wieni.be).
