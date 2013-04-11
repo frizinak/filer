@@ -2,6 +2,7 @@
 
 class Filer {
 
+  CONST TEMP_EXT = '.tmp';
   private $id;
 
   /**
@@ -116,6 +117,10 @@ class Filer {
    */
   public function finish($frid) {
     $row = $this->getFiles($frid);
+    if (!rename($row['file'] . TEMP_EXT, $row['file'])) {
+      watchdog('filer', 'could not rename %file to %nfile', array('%file' => $row['file'] . TEMP_EXT, '%nfile' => $row['file']));
+      return;
+    }
     if (!empty($row)) {
       db_delete('filer')->isNotNull('finished')->condition('file', $row['file'])->execute();
     }

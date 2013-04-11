@@ -30,7 +30,7 @@ function filer_cron_callback($data) {
   }
   $callback = $filer_row['callback'];
   $fn = $data['filepath'];
-  $tmp_fn = $data['filepath'] . '.tmp';
+  $tmp_fn = $data['filepath'] . Filer::TEMP_EXT;
   if (!function_exists($callback)) {
     watchdog('filer', 'callback function %func was not found', array('%func' => $callback));
     return;
@@ -42,7 +42,9 @@ function filer_cron_callback($data) {
   $content = '';
   if (!empty($data['read'])) {
     clearstatcache(TRUE);
-    $content = fread($fh, filesize($tmp_fn));
+    if ($filesize = filesize($tmp_fn)) {
+      $content = fread($fh, $filesize);
+    }
   }
   $return = call_user_func($callback, $data['data'], $content, $fh, $data['status']);
   if (is_string($return) && fwrite($fh, $return) === FALSE) {
@@ -50,9 +52,6 @@ function filer_cron_callback($data) {
   }
   fclose($fh);
   if ($data['status'] === 'last') {
-    if (!rename($tmp_fn, $fn)) {
-      watchdog('filer', 'could not rename %file to %nfile', array('%file' => $tmp_fn, '%nfile' => $fn));
-    }
     $filer->finish($data['frid']);
   }
 }
