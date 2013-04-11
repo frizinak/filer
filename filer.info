@@ -2,6 +2,7 @@ name = Filer
 description = Simple file writing interface.
 package = wieni
 configure = admin/config/content/filer
+files[] = filer.class.php
 core = 7.x
 version = "0.1 alpha"
 project = "filer"
