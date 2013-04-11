@@ -27,6 +27,10 @@ class Filer {
    * @return              bool      FALSE on failure.
    */
   public function add($filepath, $items, $callback, $filemode = 'a', $read = FALSE) {
+    if (empty($items) || !is_array($items) || empty($filepath)) {
+      watchdog('filer', 'Invalid arguments passed.', func_get_args());
+      return FALSE;
+    }
     if (($filemode = $this->validateFileMode($filemode, $read)) === FALSE) {
       watchdog('filer', 'Invalid filemode given.');
       return FALSE;
@@ -52,6 +56,7 @@ class Filer {
         $status = 'first';
       }
       $q->createItem(array(
+        'id' => $this->id,
         'frid' => $frid,
         'status' => $status,
         'read' => $read,
@@ -70,8 +75,8 @@ class Filer {
    * @return          bool  FALSE on failure.
    */
   public function deleteFile($frid) {
-    $row = $this->getFiles($frid);
-    if (isset($row['file']) && unlink($row['file'])) {
+    $row = $this->getFiles($frid, TRUE);
+    if (isset($row['file']) && (!file_exists($row['file']) || unlink($row['file']))) {
       $this->deleteRow($frid);
       return TRUE;
     }
@@ -83,25 +88,32 @@ class Filer {
    *
    * @param   $frid   Int     FilerFileId.
    * @param   $path   String  Absolute path to the file.
+   * @param   $reset  bool    If TRUE, drupal_static will be overwritten instead of returned.
    * @return          mixed
    */
-  public function getFiles($frid = NULL, $path = NULL) {
-    $qry = db_select('filer', 'f');
-    $qry->fields('f', array('frid', 'id', 'callback', 'file', 'finished'));
-    $qry->condition('f.id', $this->id);
-    if (is_numeric($frid)) {
-      $qry->condition('f.frid', $frid);
+  public function getFiles($frid = NULL, $path = NULL, $reset = FALSE) {
+    $results = & drupal_static(__FUNCTION__ . json_encode(func_get_args()));
+    if (!isset($results) || $reset) {
+      $qry = db_select('filer', 'f');
+      $qry->fields('f', array('frid', 'id', 'callback', 'file', 'finished'));
+      $qry->condition('f.id', $this->id);
+      if (is_numeric($frid)) {
+        $qry->condition('f.frid', $frid);
+      }
+      if (is_string($path)) {
+        $qry->condition('f.file', $path);
+      }
+      $result = $qry->execute();
+      if (!is_null($frid)) {
+        $results = $result->fetchAssoc();
+      }
+      else {
+        $results = $result->fetchAllAssoc('frid', PDO::FETCH_ASSOC);
+      }
     }
-    if (is_string($path)) {
-      $qry->condition('f.file', $path);
-    }
-    $result = $qry->execute();
-    if (!is_null($frid)) {
-      return $result->fetchAssoc();
-    }
-    else {
-      return $result->fetchAllAssoc('frid', PDO::FETCH_ASSOC);
-    }
+
+    return $results;
+
   }
 
   /**
@@ -115,6 +127,7 @@ class Filer {
    */
   public function process($frid, $data, $filemode, $read, $status) {
     if (($filemode = $this->validateFileMode($filemode, $read)) === FALSE) {
+      $this->deleteRow($frid);
       watchdog('filer', 'Invalid filemode given.');
       return;
     }
@@ -124,13 +137,21 @@ class Filer {
       watchdog('filer', 'Invalid data in filer table', $filer_row);
       return;
     }
-    $callback = $filer_row['callback'];
-    $tmp_fn = $filer_row['file'] . Self::TEMP_EXT;
+    $callbacks = module_invoke_all('filer');
+    if (empty($callbacks[$filer_row['callback']])) {
+      $this->deleteRow($frid);
+      watchdog('filer', 'No callbacks found', $filer_row['callback']);
+      return;
+    }
+    $callback = $callbacks[$filer_row['callback']];
     if (!function_exists($callback)) {
+      $this->deleteRow($frid);
       watchdog('filer', 'callback function %func was not found', array('%func' => $callback));
       return;
     }
+    $tmp_fn = $filer_row['file'] . self::TEMP_EXT;
     if (!$fh = fopen($tmp_fn, $filemode)) {
+      $this->deleteRow($frid);
       watchdog('filer', 'could not open file: %file', array('%file' => $tmp_fn));
       return;
     }
@@ -158,9 +179,9 @@ class Filer {
    * @private
    */
   private function finish($frid) {
-    $row = $this->getFiles($frid);
-    if (!rename($row['file'] . Self::TEMP_EXT, $row['file'])) {
-      watchdog('filer', 'could not rename %file to %nfile', array('%file' => $row['file'] . TEMP_EXT, '%nfile' => $row['file']));
+    $row = $this->getFiles($frid, TRUE);
+    if (!rename($row['file'] . self::TEMP_EXT, $row['file'])) {
+      watchdog('filer', 'could not rename %file to %nfile', array('%file' => $row['file'] . self::TEMP_EXT, '%nfile' => $row['file']));
       return;
     }
     if (!empty($row)) {

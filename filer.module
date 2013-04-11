@@ -20,6 +20,12 @@ function filer_cron_queue_info() {
  * Status indicator will be 'first', empty or 'last'.
  */
 function filer_cron_callback($data) {
+  foreach (array('id', 'frid', 'data', 'fmode', 'read', 'status') as $key) {
+    if (!isset($data[$key])) {
+      watchdog('filer', 'data passed to filer_cron_callback is incomplete.', $data);
+      return;
+    }
+  }
   $filer = new Filer($data['id']);
-  $filer->process($data['frid'], $data['filepath'], $data['data'], $data['fmode'], $data['read'], $data['status']);
+  $filer->process($data['frid'], $data['data'], $data['fmode'], $data['read'], $data['status']);
 }

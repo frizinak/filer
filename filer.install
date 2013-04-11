@@ -35,13 +35,6 @@ function filer_schema() {
         'unsigned' => TRUE,
         'not null' => FALSE,
         'default' => NULL,
-      ),
-      'remaining' => array(
-        'description' => 'Items remaining in queue.',
-        'type' => 'int',
-        'unsigned' => TRUE,
-        'not null' => FALSE,
-        'default' => NULL,
       )
     ),
     'primary key' => array('frid'),
@@ -50,5 +43,6 @@ function filer_schema() {
       'id' => array('id')
     )
   );
+
   return $schema;
 }
