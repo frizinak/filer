@@ -7,6 +7,8 @@ Not ready for production yet.
 
 Usage example:
 ```
+// Create a file and write to it on cron:
+
 $content_types = node_type_get_types();
 $nids = array_keys(db_select('node', 'n')
           ->fields('n', array('nid'))
@@ -30,5 +32,13 @@ function callback($data, $content, $fh, $status) {
   $node = node_load($data);
   return $node->title . "\n";
 }
+
+// Get all files and delete them:
+
+$f = new Filer('nodes');
+foreach($f->getFiles() as $file){
+  $f->deleteFile($file->frid);
+}
+
 
 ```
