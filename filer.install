@@ -20,7 +20,7 @@ function filer_schema() {
         'length' => '255'
       ),
       'callback' => array(
-        'description' => 'Path to file.',
+        'description' => 'Callback function.',
         'type' => 'varchar',
         'length' => '255'
       ),
@@ -31,6 +31,13 @@ function filer_schema() {
       ),
       'finished' => array(
         'description' => 'Date the file was finished.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => NULL,
+      ),
+      'remaining' => array(
+        'description' => 'Items remaining in queue.',
         'type' => 'int',
         'unsigned' => TRUE,
         'not null' => FALSE,

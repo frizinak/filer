@@ -21,37 +21,5 @@ function filer_cron_queue_info() {
  */
 function filer_cron_callback($data) {
   $filer = new Filer($data['id']);
-  $filer_row = $filer->getFiles($data['frid']);
-  if (!isset($filer_row['callback'])) {
-    $filer->deleteRow($data['frid']);
-    watchdog('filer', 'Invalid data in filer table', $filer_row);
-    return;
-
-  }
-  $callback = $filer_row['callback'];
-  $fn = $data['filepath'];
-  $tmp_fn = $data['filepath'] . Filer::TEMP_EXT;
-  if (!function_exists($callback)) {
-    watchdog('filer', 'callback function %func was not found', array('%func' => $callback));
-    return;
-  }
-  if (!$fh = fopen($tmp_fn, $data['fmode'])) {
-    watchdog('filer', 'could not open file: %file', array('%file' => $tmp_fn));
-    return;
-  }
-  $content = '';
-  if (!empty($data['read'])) {
-    clearstatcache(TRUE);
-    if ($filesize = filesize($tmp_fn)) {
-      $content = fread($fh, $filesize);
-    }
-  }
-  $return = call_user_func($callback, $data['data'], $content, $fh, $data['status']);
-  if (is_string($return) && fwrite($fh, $return) === FALSE) {
-    watchdog('filer', 'could not write to %file', array('%file' => $tmp_fn));
-  }
-  fclose($fh);
-  if ($data['status'] === 'last') {
-    $filer->finish($data['frid']);
-  }
+  $filer->process($data['frid'], $data['filepath'], $data['data'], $data['fmode'], $data['read'], $data['status']);
 }

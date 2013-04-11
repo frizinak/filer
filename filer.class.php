@@ -24,17 +24,14 @@ class Filer {
    * @param   $callback   String    Reference to a function, called for each item in $items.
    * @param   $filemode   String    @see http://php.net/manual/en/function.fopen.php: mode.
    * @param   $read       bool      Whether to read the file and pass the contents to $callback.
-   * @return              bool      FALSE on failure
+   * @return              bool      FALSE on failure.
    */
   public function add($filepath, $items, $callback, $filemode = 'a', $read = FALSE) {
-    $fmstrlen = strlen($filemode);
-    if (!in_array(substr($filemode, 0, 1), array('r', 'w', 'a', 'x', 'c')) || !in_array(substr($filemode, 1, 1), array('+', '')) || $fmstrlen > 2 || $fmstrlen == 0) {
-      watchdog('filer', 'Invalid filemode given');
+    if (($filemode = $this->validateFileMode($filemode, $read)) === FALSE) {
+      watchdog('filer', 'Invalid filemode given.');
       return FALSE;
     }
-    if ($read && $fmstrlen == 1 && in_array($filemode, array('a', 'w', 'x', 'c'))) {
-      $filemode .= '+';
-    }
+
     $insert = array('id' => $this->id, 'callback' => $callback, 'file' => $filepath);
     watchdog('', '', $this->id);
     $frid = db_insert('filer')->fields($insert)->execute();
@@ -56,14 +53,13 @@ class Filer {
       }
       $q->createItem(array(
         'frid' => $frid,
-        'id' => $this->id,
         'status' => $status,
         'read' => $read,
         'fmode' => $filemode,
-        'filepath' => $filepath,
         'data' => $item
       ));
     }
+
     return TRUE;
   }
 
@@ -104,20 +100,66 @@ class Filer {
       return $result->fetchAssoc();
     }
     else {
-      return $result->fetchAllAssoc('frid');
+      return $result->fetchAllAssoc('frid', PDO::FETCH_ASSOC);
     }
   }
 
   /**
-   * Internal filer function!
+   * Internal filer function, do not use directly as the item won't be removed from the queue.
+   *
+   * @param   $frid     Int
+   * @param   $data     Mixed
+   * @param   $filemode String
+   * @param   $read     bool
+   * @param   $status   String
+   */
+  public function process($frid, $data, $filemode, $read, $status) {
+    if (($filemode = $this->validateFileMode($filemode, $read)) === FALSE) {
+      watchdog('filer', 'Invalid filemode given.');
+      return;
+    }
+    $filer_row = $this->getFiles($frid);
+    if (!isset($filer_row['callback'])) {
+      $this->deleteRow($frid);
+      watchdog('filer', 'Invalid data in filer table', $filer_row);
+      return;
+    }
+    $callback = $filer_row['callback'];
+    $tmp_fn = $filer_row['file'] . Self::TEMP_EXT;
+    if (!function_exists($callback)) {
+      watchdog('filer', 'callback function %func was not found', array('%func' => $callback));
+      return;
+    }
+    if (!$fh = fopen($tmp_fn, $filemode)) {
+      watchdog('filer', 'could not open file: %file', array('%file' => $tmp_fn));
+      return;
+    }
+    $content = '';
+    if (!empty($read)) {
+      clearstatcache(TRUE);
+      if ($filesize = filesize($tmp_fn)) {
+        $content = fread($fh, $filesize);
+      }
+    }
+    $return = call_user_func($callback, $data, $content, $fh, $status);
+    if (is_string($return) && fwrite($fh, $return) === FALSE) {
+      watchdog('filer', 'could not write to %file', array('%file' => $tmp_fn));
+    }
+    fclose($fh);
+    if ($status === 'last') {
+      $this->finish($frid);
+    }
+  }
+
+  /**
    * Sets filetask to finished.
    *
    * @param   $frid   Int   FilerFileId.
    * @private
    */
-  public function finish($frid) {
+  private function finish($frid) {
     $row = $this->getFiles($frid);
-    if (!rename($row['file'] . TEMP_EXT, $row['file'])) {
+    if (!rename($row['file'] . Self::TEMP_EXT, $row['file'])) {
       watchdog('filer', 'could not rename %file to %nfile', array('%file' => $row['file'] . TEMP_EXT, '%nfile' => $row['file']));
       return;
     }
@@ -128,13 +170,23 @@ class Filer {
   }
 
   /**
-   * Internal filer function!
    * Deletes one or more rows from the filer table.
    *
    * @param   $frid   Int   FilerFileId.
    * @private
    */
-  public function deleteRow($frid) {
+  private function deleteRow($frid) {
     db_delete('filer')->condition('frid', $frid)->condition('id', $this->id)->execute();
+  }
+
+  private function validateFileMode($filemode, $read) {
+    $fmstrlen = strlen($filemode);
+    if (!in_array(substr($filemode, 0, 1), array('r', 'w', 'a', 'x', 'c')) || !in_array(substr($filemode, 1, 1), array('+', '')) || $fmstrlen > 2 || $fmstrlen == 0) {
+      return FALSE;
+    }
+    if ($read && $fmstrlen == 1 && in_array($filemode, array('a', 'w', 'x', 'c'))) {
+      $filemode .= '+';
+    }
+    return $filemode;
   }
 }
