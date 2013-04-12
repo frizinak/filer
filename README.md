@@ -2,13 +2,11 @@ filer
 =====
 
 Drupal module to store large amounts of data in files (csv, json, ...)
-TODO: ui to manage files.
 
-Not ready for production yet.
+TODO: UI to manage files.
 
 Usage example:
-```
-// Create a file and write to it on cron, appending lines:
+```php
 $content_types = node_type_get_types();
 $nids = array_keys(db_select('node', 'n')
           ->fields('n', array('nid'))
@@ -17,6 +15,7 @@ $nids = array_keys(db_select('node', 'n')
           ->execute()
           ->fetchAllAssoc('nid'));
 
+// Create a file and write to it on cron, appending lines:
 $f = new Filer('nodes');
 $f->add('public://nodes-' . time() . '.txt', array('items' => $nids, 'append' => TRUE, 'read' => FALSE));
 
