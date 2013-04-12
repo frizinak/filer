@@ -2,13 +2,13 @@ filer
 =====
 
 Drupal module to store large amounts of data in files (csv, json, ...)
+TODO: ui to manage files.
 
 Not ready for production yet.
 
 Usage example:
 ```
-// Create a file and write to it on cron:
-
+// Create a file and write to it on cron, appending lines:
 $content_types = node_type_get_types();
 $nids = array_keys(db_select('node', 'n')
           ->fields('n', array('nid'))
@@ -17,30 +17,39 @@ $nids = array_keys(db_select('node', 'n')
           ->execute()
           ->fetchAllAssoc('nid'));
 
-$files = new Filer('nodes');
-$f->add(drupal_realpath('public:///nodes-' . time() . '.txt'), $nids, 'callback');
+$f = new Filer('nodes');
+$f->add('public://nodes-' . time() . '.txt', array('items' => $nids, 'append' => TRUE, 'read' => FALSE));
 
-function callback($data, $content, $fh, $status) {
+function hook_filer_nodes_cron($data, $content, $fh, $status) {
   $node = node_load($data);
-  $row = (array)my_custom_extract_field_values_from_node($node);
-  fputcsv($fh, $row);
+  fputcsv($fh, node_to_array($node));
 }
 
-/* OR */
+// Create a file and write to it on cron, overwriting it on each call and passing old contents to our hook_filer_FILER_NAME_cron():
+$f = new Filer('wickedJsonNodes');
+$f->add('public://json/nodes.json', array('items' => $nids, 'append' => FALSE, 'read' => TRUE));
 
-function callback($data, $content, $fh, $status) {
-  $node = node_load($data);
-  return $node->title . "\n";
+// Create a non queue task:
+$frid = $f->add('public://json/nodes_manual.json', null, FALSE);
+foreach($nids as $nid) {
+  $f->run($frid, $nid, FALSE, TRUE);
+}
+
+function hook_filer_wickedJsonNodes_cron($nid, $content, $fh, $status) {
+  $stored = json_decode($content, TRUE);
+  $node = node_load($nid);
+  $stored[$nid] = node_to_array($node);
+  return json_encode($stored);
 }
 
 // Get all files and delete them:
 
 $f = new Filer('nodes');
-foreach($f->getFiles() as $file){
-  $f->deleteFile($file->frid);
+foreach($f->files() as $file){
+  $f->delete($file['frid']);
 }
 
 
 ```
 
-Thanks to [wieni](http://wieni.be).
+Sponsored by [wieni](http://wieni.be).
