@@ -2,212 +2,292 @@
 
 class Filer {
 
+  /**
+   * @const String  File extension for temporary files.
+   */
   CONST TEMP_EXT = '.tmp';
-  private $id;
 
   /**
-   * @param $id String  Arbitrary string used to differentiate between Filer data.
-   * @throws ErrorException when $id is not a non-empty string
+   * @var   String  Filer identifier.
    */
-  public function __construct($id) {
-    if (!is_string($id) || empty($id)) {
-      throw new ErrorException('Filer::__construct($id) requires a non-empty string as first param.');
-    }
-    $this->id = $id;
+  private $name;
+
+  /**
+   * Fetches all Filer names.
+   *
+   * @param   $finished     Bool    Include name even if all tasks within that filer are completed.
+   * @param   $nonQueued    Bool    Include names of non-queued tasks.
+   * @return                Array
+   */
+  public static function getNames($finished = FALSE, $nonQueued = FALSE) {
+    $q = db_select('filer', 'f')->distinct()->fields('f', array('name'));
+    if (!$finished)
+      $q->isNull('f.finished');
+    if (!$nonQueued)
+      $q->condition('f.queued', 1);
+    return array_keys($q->execute()->fetchAllAssoc('name', PDO::FETCH_ASSOC));
   }
 
   /**
-   * Add new filer task.
+   * Synchronize all Filer rows.
    *
-   * @param   $filepath   String    Absolute filepath.
-   * @param   $items      Array     Array of items, each item is passed to the given callback function.
-   * @param   $callback   String    Reference to a function, called for each item in $items.
-   * @param   $filemode   String    @see http://php.net/manual/en/function.fopen.php: mode.
-   * @param   $read       bool      Whether to read the file and pass the contents to $callback.
-   * @return              bool      FALSE on failure.
+   * @see Filer::sync().
    */
-  public function add($filepath, $items, $callback, $filemode = 'a', $read = FALSE) {
-    if (empty($items) || !is_array($items) || empty($filepath)) {
-      watchdog('filer', 'Invalid arguments passed.', func_get_args());
-      return FALSE;
+  public static function synchronize() {
+    foreach (self::getNames(TRUE) as $name) {
+      $filer = new Filer($name);
+      $filer->sync();
     }
-    if (($filemode = $this->validateFileMode($filemode, $read)) === FALSE) {
-      watchdog('filer', 'Invalid filemode given.');
-      return FALSE;
-    }
-
-    $insert = array('id' => $this->id, 'callback' => $callback, 'file' => $filepath);
-    watchdog('', '', $this->id);
-    $frid = db_insert('filer')->fields($insert)->execute();
-    if (is_null($frid)) {
-      watchdog('filer', 'Could not insert row into filer table');
-      return FALSE;
-    }
-    $q = DrupalQueue::get(FILER_CRON);
-    $item_count = count($items);
-    $i = 0;
-    foreach ($items as $item) {
-      $i++;
-      $status = '';
-      if ($i == $item_count) {
-        $status = 'last';
-      }
-      elseif ($i == 1) {
-        $status = 'first';
-      }
-      $q->createItem(array(
-        'id' => $this->id,
-        'frid' => $frid,
-        'status' => $status,
-        'read' => $read,
-        'fmode' => $filemode,
-        'data' => $item
-      ));
-    }
-
-    return TRUE;
   }
 
   /**
-   * Unlink file from filesystem and delete from db if successful.
-   *
-   * @param   $frid   Int   FilerFileId.
-   * @return          bool  FALSE on failure.
+   * @param $name   String          Filer identifier.
+   * @throws        ErrorException  If name is a non-empty string.
    */
-  public function deleteFile($frid) {
-    $row = $this->getFiles($frid, TRUE);
-    if (isset($row['file']) && (!file_exists($row['file']) || unlink($row['file']))) {
-      $this->deleteRow($frid);
-      return TRUE;
+  public function __construct($name) {
+    if (!is_string($name) || empty($name)) {
+      throw new ErrorException('Filer::__construct($name) requires a non-empty string as first param.');
+    }
+    $this->name = $name;
+    $this->sync();
+  }
+
+  /**
+   * @param   $path     String    Path of the file we want to write to, can be a wrapper.
+   * @param   $options  Array     Optional: array indexed as follows:
+   *                              - items   Array   Each item is passed to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
+   *                              - append  Bool    Whether to append or overwrite the contents of $path on each callback.
+   *                              -                 e.g. CSV: append => FALSE, JSON: append => TRUE.
+   *                              - read    Bool    Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
+   * @param   $enqueue  Bool      If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME_cron().
+   *                              - Otherwise manual calling of Filer::run() is required to fill our file.
+   *                              - @Note: if FALSE $options will be ignored.
+   * @return            Bool|Int  frid on success, FALSE on failure.
+   */
+  public function add($path, $options, $enqueue = TRUE) {
+    if (($enqueue && (empty($options['items']) || !is_array($options['items']))) || empty($path)) {
+      watchdog('filer', 'Invalid arguments passed to Filer::add().');
+      return FALSE;
+    }
+
+    $options += array('items' => array(), 'append' => TRUE, 'read' => TRUE);
+
+    if (!$frid = $this->addRow($path, $enqueue))
+      return FALSE;
+
+    if ($enqueue) {
+      $q = DrupalQueue::get(FILER_CRON . $this->name);
+      $item_count = count($options['items']);
+      $i = 0;
+      foreach ($options['items'] as $item) {
+        $i++;
+        $q->createItem(array(
+          'name' => $this->name,
+          'frid' => $frid,
+          'status' => $i == $item_count ? 'last' : ($i == 1 ? 'first' : ''),
+          'read' => $options['read'],
+          'append' => $options['append'],
+          'item' => $item
+        ));
+      }
+    }
+    return $frid;
+  }
+
+  /**
+   * Delete a file from both db and the filesystem.
+   *
+   * @param   $frid   Int   The frid.
+   * @return          Bool  TRUE if the file was deleted from the filesystem or did not exist, FALSE otherwise.
+   */
+  public function delete($frid) {
+    $row = $this->files($frid);
+    if (isset($row['file'])) {
+      $ext = empty($row['finished']) ? self::TEMP_EXT : '';
+      if (!file_exists($row['file'] . $ext) || unlink($row['file'] . $ext)) {
+        $this->deleteRow($frid);
+        return TRUE;
+      }
     }
     return FALSE;
   }
 
   /**
-   * Get all FilerFile rows. Filtering out those not matching given $frid or/and $path.
+   * Get a list of all files, or the file specified by $frid
    *
-   * @param   $frid   Int     FilerFileId.
-   * @param   $path   String  Absolute path to the file.
-   * @param   $reset  bool    If TRUE, drupal_static will be overwritten instead of returned.
-   * @return          mixed
+   * @param   $frid   Int     The frid.
+   * @return          mixed   If frid was specified: single row array, otherwise an array of row arrays.
    */
-  public function getFiles($frid = NULL, $path = NULL, $reset = FALSE) {
-    $results = & drupal_static(__FUNCTION__ . json_encode(func_get_args()));
-    if (!isset($results) || $reset) {
-      $qry = db_select('filer', 'f');
-      $qry->fields('f', array('frid', 'id', 'callback', 'file', 'finished'));
-      $qry->condition('f.id', $this->id);
-      if (is_numeric($frid)) {
-        $qry->condition('f.frid', $frid);
-      }
-      if (is_string($path)) {
-        $qry->condition('f.file', $path);
-      }
-      $result = $qry->execute();
-      if (!is_null($frid)) {
-        $results = $result->fetchAssoc();
-      }
-      else {
-        $results = $result->fetchAllAssoc('frid', PDO::FETCH_ASSOC);
-      }
+  public function files($frid = NULL) {
+    $qry = db_select('filer', 'f');
+    $qry->fields('f', array('frid', 'name', 'file', 'finished', 'queued'));
+    $qry->condition('f.name', $this->name);
+    if (is_numeric($frid)) {
+      $qry->condition('f.frid', $frid);
+    }
+    $qry = $qry->execute();
+    if (!is_null($frid)) {
+      $results = $qry->fetchAssoc();
+    }
+    else {
+      $results = $qry->fetchAllAssoc('frid', PDO::FETCH_ASSOC);
     }
 
     return $results;
-
   }
 
   /**
-   * Internal filer function, do not use directly as the item won't be removed from the queue.
-   *
-   * @param   $frid     Int
-   * @param   $data     Mixed
-   * @param   $filemode String
-   * @param   $read     bool
-   * @param   $status   String
+   * Synchronize the rows of the current Filer (delete db records if file does not exist in the filesystem or we have an orphaned temporary file).
    */
-  public function process($frid, $data, $filemode, $read, $status) {
-    if (($filemode = $this->validateFileMode($filemode, $read)) === FALSE) {
-      $this->deleteRow($frid);
-      watchdog('filer', 'Invalid filemode given.');
-      return;
+  public function sync() {
+    $files = $this->files();
+    $queued_items = $this->numberOfItems();
+    if (empty($files) && !empty($queued_items)) {
+      $this->deleteQueue();
     }
-    $filer_row = $this->getFiles($frid);
-    if (!isset($filer_row['callback'])) {
-      $this->deleteRow($frid);
-      watchdog('filer', 'Invalid data in filer table', $filer_row);
-      return;
-    }
-    $callbacks = module_invoke_all('filer');
-    if (empty($callbacks[$filer_row['callback']])) {
-      $this->deleteRow($frid);
-      watchdog('filer', 'No callbacks found', $filer_row['callback']);
-      return;
-    }
-    $callback = $callbacks[$filer_row['callback']];
-    if (!function_exists($callback)) {
-      $this->deleteRow($frid);
-      watchdog('filer', 'callback function %func was not found', array('%func' => $callback));
-      return;
-    }
-    $tmp_fn = $filer_row['file'] . self::TEMP_EXT;
-    if (!$fh = fopen($tmp_fn, $filemode)) {
-      $this->deleteRow($frid);
-      watchdog('filer', 'could not open file: %file', array('%file' => $tmp_fn));
-      return;
-    }
-    $content = '';
-    if (!empty($read)) {
-      clearstatcache(TRUE);
-      if ($filesize = filesize($tmp_fn)) {
-        $content = fread($fh, $filesize);
+    foreach ($files as $file) {
+      if (empty($queued_items) && empty($file['finished']) && !empty($file['queued'])) {
+        $this->delete($file['frid']);
+      }
+      elseif (!empty($file['finished']) && !file_exists($file['file'])) {
+        $this->delete($file['frid']);
       }
     }
-    $return = call_user_func($callback, $data, $content, $fh, $status);
-    if (is_string($return) && fwrite($fh, $return) === FALSE) {
-      watchdog('filer', 'could not write to %file', array('%file' => $tmp_fn));
-    }
-    fclose($fh);
-    if ($status === 'last') {
-      $this->finish($frid);
-    }
   }
 
   /**
-   * Sets filetask to finished.
+   * @return  Int   An alias for DrupalQueueInterface::numberOfItems();
+   */
+  public function numberOfItems() {
+    return DrupalQueue::get(FILER_CRON . $this->name)->numberOfItems();
+  }
+
+  /**
+   * @return  void  An alias for DrupalQueueInterface::deleteQueue();
+   */
+  public function deleteQueue() {
+    DrupalQueue::get(FILER_CRON . $this->name)->deleteQueue();
+  }
+
+  /**
+   * Manual runner. If a task was added (Filer::add()) with param $enqueue = FALSE, use this method to invoke hook_filer_FILER_NAME_cron().
+   * Calling this for a queued task will do nothing.
    *
-   * @param   $frid   Int   FilerFileId.
+   * @param   $frid   Int     The frid. We like frid.
+   * @param   $item   mixed   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
+   * @param   $append Bool    Whether to append or overwrite the file. @see Filer::add().
+   * @param   $read   Bool    Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, ...). @see Filer::add().
+   * @return          Bool    FALSE on failure.
+   */
+  public function run($frid, $item, $append = TRUE, $read = FALSE) {
+    return $this->write($frid, $item, $append, $read, TRUE, TRUE);
+  }
+
+  /**
+   * Cron runner (internal).
+   *
    * @private
    */
-  private function finish($frid) {
-    $row = $this->getFiles($frid, TRUE);
-    if (!rename($row['file'] . self::TEMP_EXT, $row['file'])) {
+  public function _run($frid, $item, $append = TRUE, $read = FALSE, $status) {
+    $this->write($frid, $item, $append, $read, $status === 'last', FALSE);
+  }
+
+  /**
+   * TODO: write me.
+   *
+   * @param $frid
+   * @param $item
+   * @param $append
+   * @param $read
+   * @param $finish
+   * @param $manual
+   * @return bool
+   */
+  private function write($frid, $item, $append, $read, $finish, $manual) {
+    $hook = 'filer_' . $this->name . '_cron';
+    $modules = module_implements($hook);
+    if (empty($modules)) {
+      watchdog('filer', 'No modules implement hook_%hook', array('%hook' => $hook));
+      return FALSE;
+    }
+    $filer_row = $this->files($frid);
+    dsm($filer_row['queued']);
+    dsm($manual);
+    dsm($filer_row);
+    if (empty($filer_row) || (!empty($filer_row['queued']) && $manual))
+      return FALSE;
+    $fn = $filer_row['file'] . ($manual ? '' : self::TEMP_EXT);
+    $dir = dirname($fn);
+    if (!file_prepare_directory($dir, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS)) {
+      watchdog('filer', 'Could not prepare directory (%path)', array('%path' => $dir));
+      return FALSE;
+    }
+    $content = '';
+    if ($read && file_exists($fn)) {
+      $content = file_get_contents($fn);
+    }
+    if ($fh = fopen($fn, $append ? 'a' : 'w')) {
+      foreach ($modules as $module) {
+        $return = module_invoke($module, $hook, $item, $content, $fh, $finish);
+        if (is_string($return) && fwrite($fh, $return) === FALSE) {
+          watchdog('filer', 'could not write to %file', array('%file' => $fn));
+        }
+      }
+      fclose($fh);
+    }
+    else {
+      watchdog('filer', 'could not open file: %file', array('%file' => $fn));
+      if ($finish)
+        $this->sync();
+    }
+    if ($finish)
+      $this->finish($frid, !$manual);
+    return TRUE;
+  }
+
+  /**
+   * Finishes the file: rename temporary file to permanent file if necessary
+   * and merge identical rows into 1 (given they're all finished and their path is the same).
+   *
+   * @param   $frid   Int   The frid.
+   * @param   $temp   Bool  If TRUE rename file.tmp to file.
+   */
+  private function finish($frid, $temp = TRUE) {
+    $row = $this->files($frid);
+    if ($temp && !rename($row['file'] . self::TEMP_EXT, $row['file'])) {
       watchdog('filer', 'could not rename %file to %nfile', array('%file' => $row['file'] . self::TEMP_EXT, '%nfile' => $row['file']));
       return;
     }
     if (!empty($row)) {
       db_delete('filer')->isNotNull('finished')->condition('file', $row['file'])->execute();
     }
-    db_update('filer')->fields(array('finished' => time()))->condition('frid', $frid)->condition('id', $this->id)->execute();
+    db_update('filer')->fields(array('finished' => time()))->condition('frid', $frid)->condition('name', $this->name)->execute();
   }
 
   /**
-   * Deletes one or more rows from the filer table.
+   * Adds a row to the filer table.
    *
-   * @param   $frid   Int   FilerFileId.
-   * @private
+   * @param   $path     String      The file path/wrapper.
+   * @param   $queued   Bool        Mark this task as queued.
+   * @return            Bool|Int    frid on success, FALSE on failure.
    */
-  private function deleteRow($frid) {
-    db_delete('filer')->condition('frid', $frid)->condition('id', $this->id)->execute();
-  }
-
-  private function validateFileMode($filemode, $read) {
-    $fmstrlen = strlen($filemode);
-    if (!in_array(substr($filemode, 0, 1), array('r', 'w', 'a', 'x', 'c')) || !in_array(substr($filemode, 1, 1), array('+', '')) || $fmstrlen > 2 || $fmstrlen == 0) {
+  private function addRow($path, $queued) {
+    $insert = array('name' => $this->name, 'file' => $path, 'queued' => (int)$queued);
+    $frid = db_insert('filer')->fields($insert)->execute();
+    if (is_null($frid)) {
+      watchdog('filer', 'Could not insert row into filer table');
       return FALSE;
     }
-    if ($read && $fmstrlen == 1 && in_array($filemode, array('a', 'w', 'x', 'c'))) {
-      $filemode .= '+';
-    }
-    return $filemode;
+    return $frid;
   }
+
+  /**
+   * Deletes a row from the filer table.
+   *
+   * @param   $frid   Int   The frid.
+   */
+  private function deleteRow($frid) {
+    db_delete('filer')->condition('frid', $frid)->condition('name', $this->name)->execute();
+  }
+
 }

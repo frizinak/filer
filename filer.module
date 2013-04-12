@@ -1,31 +1,32 @@
 <?php
-define('FILER_CRON', 'filer:cron');
+define('FILER_CRON', 'filer:');
 
 /**
  * Implements hook_cron_queue_info().
  */
 function filer_cron_queue_info() {
-  $queues[FILER_CRON] = array(
-    'worker callback' => 'filer_cron_callback',
-    'time' => 30,
-  );
-
+  $queues = array();
+  foreach (Filer::getNames() as $id) {
+    $queues[FILER_CRON . $id] = array(
+      'worker callback' => 'filer_cron_callback',
+      'time' => 30,
+    );
+  }
   return $queues;
 }
 
 /**
  * Main cron callback.
- * This function will open the file and write the return value of the given callback function, if the return value is a string.
- * Passes the provided data, file contents, the filehandle and a status indicator to the callback.
- * Status indicator will be 'first', empty or 'last'.
  */
 function filer_cron_callback($data) {
-  foreach (array('id', 'frid', 'data', 'fmode', 'read', 'status') as $key) {
+  // Ignore invalid queue items.
+  foreach (array('name', 'frid', 'item', 'append', 'read', 'status') as $key) {
     if (!isset($data[$key])) {
       watchdog('filer', 'data passed to filer_cron_callback is incomplete.', $data);
       return;
     }
   }
-  $filer = new Filer($data['id']);
-  $filer->process($data['frid'], $data['data'], $data['fmode'], $data['read'], $data['status']);
+  //
+  $filer = new Filer($data['name']);
+  $filer->_run($data['frid'], $data['item'], $data['append'], $data['read'], $data['status']);
 }

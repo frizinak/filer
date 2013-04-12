@@ -14,13 +14,8 @@ function filer_schema() {
         'unsigned' => TRUE,
         'not null' => TRUE,
       ),
-      'id' => array(
+      'name' => array(
         'description' => 'Identifier.',
-        'type' => 'varchar',
-        'length' => '255'
-      ),
-      'callback' => array(
-        'description' => 'Callback function.',
         'type' => 'varchar',
         'length' => '255'
       ),
@@ -35,12 +30,20 @@ function filer_schema() {
         'unsigned' => TRUE,
         'not null' => FALSE,
         'default' => NULL,
+      ),
+      'queued' => array(
+        'description' => 'bool indicating whether this task was queued.',
+        'type' => 'int',
+        'size' => 'tiny',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => 0,
       )
     ),
     'primary key' => array('frid'),
     'indexes' => array(
       'frid' => array('frid'),
-      'id' => array('id')
+      'name' => array('name')
     )
   );
 
