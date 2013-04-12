@@ -211,9 +211,6 @@ class Filer {
       return FALSE;
     }
     $filer_row = $this->files($frid);
-    dsm($filer_row['queued']);
-    dsm($manual);
-    dsm($filer_row);
     if (empty($filer_row) || (!empty($filer_row['queued']) && $manual))
       return FALSE;
     $fn = $filer_row['file'] . ($manual ? '' : self::TEMP_EXT);
