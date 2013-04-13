@@ -1,13 +1,14 @@
 <?php
 define('FILER_CRON', 'filer:');
+define('FILER_PAGE_URL', 'admin/content/filer');
 
 /**
  * Implements hook_cron_queue_info().
  */
 function filer_cron_queue_info() {
   $queues = array();
-  foreach (Filer::getNames() as $id) {
-    $queues[FILER_CRON . $id] = array(
+  foreach (Filer::getNames() as $name) {
+    $queues[FILER_CRON . $name] = array(
       'worker callback' => 'filer_cron_callback',
       'time' => 30,
     );
@@ -28,5 +29,68 @@ function filer_cron_callback($data) {
   }
   //
   $filer = new Filer($data['name']);
-  $filer->_run($data['frid'], $data['item'], $data['append'], $data['read'], $data['status']);
+  $filer->_run($data['frid'], $data['item'], $data['status'], $data['append'], $data['read']);
+}
+
+/**
+ * Implements hook_permission().
+ */
+function filer_permission() {
+  $perms = array();
+  $perms['view filer'] = array('title' => t('View files overview'));
+  foreach (Filer::getNames(TRUE, TRUE) as $filerName) {
+    $replace = array('%name' => $filerName);
+    $perms['view ' . $filerName] = array('title' => t('View/Download %name files.', $replace));
+    $perms['view temp ' . $filerName] = array('title' => t('View/Download temporary %name files.', $replace));
+    $perms['delete ' . $filerName] = array('title' => t('Delete %name files.', $replace));
+    $perms['delete temp ' . $filerName] = array('title' => t('Delete temporary %name files.', $replace));
+  }
+
+  return $perms;
+}
+
+/**
+ * Implements hook_menu().
+ */
+function filer_menu() {
+  $items[FILER_PAGE_URL] = array(
+    'title' => 'Filers',
+    'page callback' => 'filer_files_page',
+    'access arguments' => array('view filer')
+  );
+  foreach (Filer::getNames(TRUE, TRUE) as $filerName) {
+    $items[FILER_PAGE_URL . '/' . $filerName] = array(
+      'title' => $filerName,
+      'page callback' => 'filer_files_page',
+      'page arguments' => array(3),
+      'access arguments' => array('view ' . $filerName)
+    );
+  }
+  return $items;
+}
+
+/**
+ * Page callback for admin/content/filer(/FILER_NAME).
+ */
+function filer_files_page($filerName = NULL) {
+  $table_header = array('Filer id', t('Name'), t('File'), t('Date finished'), t('Queued'));
+  if (is_string($filerName) && !empty($filerName)) {
+    $filer = new Filer($filerName);
+    $files = $filer->files;
+    if (empty($files))
+      return MENU_NOT_FOUND;
+    return theme('table', array('header' => $table_header, 'rows' => $files));
+  }
+  else {
+    foreach (Filer::getNames(TRUE, TRUE) as $filerName) {
+      $tables = '';
+      if (user_access('view ' . $filerName)) {
+        $filer = new Filer($filerName);
+        $files = $filer->files;
+        $tables .= l($filerName, FILER_PAGE_URL . '/' . $filerName, array('html' => TRUE));
+        $tables .= theme('table', array('header' => $table_header, 'rows' => $files));
+      }
+    }
+    return empty($tables) ? 'No Filers.' : $tables;
+  }
 }

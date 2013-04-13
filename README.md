@@ -42,7 +42,6 @@ function hook_filer_wickedJsonNodes_cron($nid, $content, $fh, $status) {
 }
 
 // Get all files and delete them:
-
 $f = new Filer('nodes');
 foreach($f->files() as $file){
   $f->delete($file['frid']);
