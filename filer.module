@@ -22,12 +22,12 @@ function filer_cron_queue_info() {
 function filer_cron_callback($data) {
   // Ignore invalid queue items.
   foreach (array('name', 'frid', 'item', 'append', 'read', 'status') as $key) {
-    if (!isset($data[$key])) {
+    if (!array_key_exists($key, $data)) {
       watchdog('filer', 'data passed to filer_cron_callback is incomplete.', $data);
       return;
     }
   }
-  //
+  // Create a new Filer object and pass DrupalQueue data to Filer::_run().
   $filer = new Filer($data['name']);
   $filer->_run($data['frid'], $data['item'], $data['status'], $data['append'], $data['read']);
 }
@@ -37,60 +37,153 @@ function filer_cron_callback($data) {
  */
 function filer_permission() {
   $perms = array();
-  $perms['view filer'] = array('title' => t('View files overview'));
+  $perms['view filer'] = array('title' => t('View filers overview'));
   foreach (Filer::getNames(TRUE, TRUE) as $filerName) {
     $replace = array('%name' => $filerName);
-    $perms['view ' . $filerName] = array('title' => t('View/Download %name files.', $replace));
-    $perms['view temp ' . $filerName] = array('title' => t('View/Download temporary %name files.', $replace));
+    $perms['view ' . $filerName] = array('title' => t('View %name files.', $replace));
+    $perms['view temp ' . $filerName] = array('title' => t('View temporary %name files.', $replace));
     $perms['delete ' . $filerName] = array('title' => t('Delete %name files.', $replace));
-    $perms['delete temp ' . $filerName] = array('title' => t('Delete temporary %name files.', $replace));
+    $perms['clear ' . $filerName . ' queue'] = array('title' => t('Clear the %name queue.', $replace));
+    $perms['download ' . $filerName] = array('title' => t('Download private %name files.', $replace));
   }
 
   return $perms;
 }
 
 /**
+ * Implements hook_file_download
+ */
+function filer_file_download($uri) {
+  // Once a user has download permissions on a Filer all of its files will be downloadable by that user,
+  // even though he might have no download permissions for another Filer that uses the same uri.
+
+  // TODO: any way to make this call less heavy?
+  $filerNames = Filer::getNames(TRUE, TRUE, $uri);
+  // Nothing to do with us, let it go.
+  if (empty($filerNames))
+    return NULL;
+  // One of ours, check if user has download permissions.
+  foreach ($filerNames as $filerName) {
+    if (user_access('download ' . $filerName)) {
+      return array('Content-Type' => file_get_mimetype($uri));
+    }
+  }
+  // Still here? No permission.
+  return -1;
+}
+
+/**
  * Implements hook_menu().
  */
 function filer_menu() {
+  $page_arg_offset = preg_match_all('/\//', FILER_PAGE_URL) + 1;
   $items[FILER_PAGE_URL] = array(
     'title' => 'Filers',
     'page callback' => 'filer_files_page',
     'access arguments' => array('view filer')
   );
+
   foreach (Filer::getNames(TRUE, TRUE) as $filerName) {
     $items[FILER_PAGE_URL . '/' . $filerName] = array(
       'title' => $filerName,
       'page callback' => 'filer_files_page',
-      'page arguments' => array(3),
+      'page arguments' => array($page_arg_offset),
       'access arguments' => array('view ' . $filerName)
     );
   }
+
+  $items[FILER_PAGE_URL . '/%filer_filer/delete/%'] = array(
+    'title' => 'Delete Filer file',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('filer_delete_file_form', $page_arg_offset, $page_arg_offset + 2),
+    'access arguments' => array('view filer'),
+    'type' => MENU_CALLBACK,
+    'file' => 'filer.forms.inc'
+  );
+
+  $items[FILER_PAGE_URL . '/%filer_filer/clear'] = array(
+    'title' => 'Clear queue',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('filer_clear_queue_form', $page_arg_offset),
+    'access arguments' => array('view filer'),
+    'type' => MENU_CALLBACK,
+    'file' => 'filer.forms.inc'
+  );
+
   return $items;
+}
+
+/**
+ * Menu object loader (%filer_filer'). Chose <MODULE>_<CLASS>_load since filer_load() would implement hook_load().
+ * TODO Right choice?
+ */
+function filer_filer_load($filerName) {
+  return new Filer($filerName);
 }
 
 /**
  * Page callback for admin/content/filer(/FILER_NAME).
  */
 function filer_files_page($filerName = NULL) {
-  $table_header = array('Filer id', t('Name'), t('File'), t('Date finished'), t('Queued'));
   if (is_string($filerName) && !empty($filerName)) {
+    // User access handled by access arguments.
     $filer = new Filer($filerName);
     $files = $filer->files;
     if (empty($files))
       return MENU_NOT_FOUND;
-    return theme('table', array('header' => $table_header, 'rows' => $files));
+    return theme('table', filer_files_page_prepare_table($files));
   }
   else {
+    $tables = '';
     foreach (Filer::getNames(TRUE, TRUE) as $filerName) {
-      $tables = '';
       if (user_access('view ' . $filerName)) {
         $filer = new Filer($filerName);
         $files = $filer->files;
         $tables .= l($filerName, FILER_PAGE_URL . '/' . $filerName, array('html' => TRUE));
-        $tables .= theme('table', array('header' => $table_header, 'rows' => $files));
+        $tables .= theme('table', filer_files_page_prepare_table($files));
       }
     }
     return empty($tables) ? 'No Filers.' : $tables;
   }
+}
+
+/**
+ * Converts an array of FilerFiles to clean table rows.
+ */
+function filer_files_page_prepare_table($files) {
+  $header = array(t('Filer id'), t('Name'), t('File'), t('Date finished'), t('Queued'), t('Actions'));
+  $rows = array();
+  foreach ($files as $row) {
+    if (empty($row['finished'])) {
+      if (!user_access('view temp ' . $row['name']))
+        continue;
+      $row['finished'] = t('not finished');
+      if (user_access('clear ' . $row['name'] . ' queue')) {
+        if ($row['queued']) {
+          $opts = array('html' => TRUE, 'query' => array('destination' => FILER_PAGE_URL . '/' . $row['name']));
+          $row['actions'] = l(t('clear entire %name queue', array('%name' => $row['name'])), FILER_PAGE_URL . '/' . $row['name'] . '/clear', $opts);
+        }
+        else {
+          $row['actions'] = '-';
+        }
+      }
+      else {
+        $row['actions'] = '-';
+      }
+    }
+    else {
+      $row['file'] = l($row['file'], file_create_url($row['file']));
+      $row['finished'] = format_date($row['finished'], 'medium');
+      $opts = array('query' => array('destination' => FILER_PAGE_URL . '/' . $row['name']));
+      if (user_access('delete ' . $row['name'])) {
+        $row['actions'] = l(t('delete'), FILER_PAGE_URL . '/' . $row['name'] . '/delete/' . $row['frid'], $opts);
+      }
+      else {
+        $row['actions'] = '-';
+      }
+    }
+    $row['queued'] = $row['queued'] ? t('Yes') : t('No');
+    $rows[] = $row;
+  }
+  return array('header' => $header, 'rows' => $rows);
 }

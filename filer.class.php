@@ -15,16 +15,19 @@ class Filer {
   /**
    * Fetches all Filer names.
    *
-   * @param   $finished     Bool    Include name even if all tasks within that filer are completed.
-   * @param   $nonQueued    Bool    Include names of non-queued tasks.
+   * @param   $finished     Bool        Include name even if all tasks within that filer are completed.
+   * @param   $nonQueued    Bool        Include names of non-queued tasks.
+   * @param   $uri          String|Bool Only return names of tasks that have a specific $uri, FALSE to ignore.
    * @return                Array
    */
-  public static function getNames($finished = FALSE, $nonQueued = FALSE) {
+  public static function getNames($finished = FALSE, $nonQueued = FALSE, $uri = FALSE) {
     $q = db_select('filer', 'f')->distinct()->fields('f', array('name'));
     if (!$finished)
       $q->isNull('f.finished');
     if (!$nonQueued)
       $q->condition('f.queued', 1);
+    if ($uri !== FALSE)
+      $q->condition('f.file', file_stream_wrapper_uri_normalize($uri));
     return array_keys($q->execute()->fetchAllAssoc('name', PDO::FETCH_ASSOC));
   }
 
@@ -64,10 +67,10 @@ class Filer {
   }
 
   /**
-   * @param   $path     String    Path of the file we want to write to, can be a wrapper.
+   * @param   $uri      String    Stream wrapper URI
    * @param   $options  Array     Optional: array indexed as follows:
    *                              - items   Array   Each item is passed to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
-   *                              - append  Bool    Whether to append or overwrite the contents of $path on each callback.
+   *                              - append  Bool    Whether to append or overwrite the contents of $uri on each callback.
    *                              -                 e.g. CSV: append => TRUE, JSON: append => FALSE.
    *                              - read    Bool    Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
    * @param   $enqueue  Bool      If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME_cron().
@@ -75,15 +78,16 @@ class Filer {
    *                              - @Note: if FALSE $options will be ignored.
    * @return            Bool|Int  frid on success, FALSE on failure.
    */
-  public function add($path, $options, $enqueue = TRUE) {
-    if (($enqueue && (empty($options['items']) || !is_array($options['items']))) || empty($path)) {
+  public function add($uri, $options, $enqueue = TRUE) {
+    $uri = file_stream_wrapper_uri_normalize($uri);
+    if (($enqueue && (empty($options['items']) || !is_array($options['items']))) || empty($uri)) {
       watchdog('filer', 'Invalid arguments passed to Filer::add().');
       return FALSE;
     }
-
+    $options = (array)$options;
     $options += array('items' => array(), 'append' => TRUE, 'read' => TRUE);
 
-    if (!$frid = $this->addRow($path, $enqueue))
+    if (!$frid = $this->addRow($uri, $enqueue))
       return FALSE;
 
     if ($enqueue) {
@@ -115,7 +119,7 @@ class Filer {
     $row = $this->files($frid);
     if (isset($row['file'])) {
       $ext = empty($row['finished']) ? self::TEMP_EXT : '';
-      if (!file_exists($row['file'] . $ext) || unlink($row['file'] . $ext)) {
+      if (!file_exists($row['file'] . $ext) || drupal_unlink($row['file'] . $ext)) {
         $this->deleteRow($frid);
         return TRUE;
       }
@@ -132,7 +136,7 @@ class Filer {
    */
   public function files($frid = NULL, $reset = FALSE) {
     if (!isset($frid)) {
-      $results = & drupal_static($this->name . __FUNCTION__);
+      $results =& drupal_static($this->name . __FUNCTION__);
     }
     if (!isset($results) || $reset) {
       $qry = db_select('filer', 'f')
@@ -257,7 +261,7 @@ class Filer {
 
   /**
    * Finishes the file: rename temporary file to permanent file if necessary
-   *                  - and merge identical rows into 1 (given they're all finished and their path is the same).
+   *                  - and merge identical rows into 1 (given they're all finished and their uri is the same).
    *
    * @param   $frid   Int   The frid.
    * @param   $temp   Bool  If TRUE rename file.tmp to file.
@@ -278,12 +282,12 @@ class Filer {
   /**
    * Adds a row to the filer table.
    *
-   * @param   $path     String      The file path/wrapper.
+   * @param   $uri      String      Stream wrapper uri.
    * @param   $queued   Bool        Mark this task as queued.
    * @return            Bool|Int    frid on success, FALSE on failure.
    */
-  private function addRow($path, $queued) {
-    $insert = array('name' => $this->name, 'file' => $path, 'queued' => (int)$queued);
+  private function addRow($uri, $queued) {
+    $insert = array('name' => $this->name, 'file' => $uri, 'queued' => (int)$queued);
     $frid = db_insert('filer')->fields($insert)->execute();
     $this->files(NULL, TRUE);
     if (is_null($frid)) {
