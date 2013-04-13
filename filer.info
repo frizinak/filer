@@ -1,11 +1,6 @@
 name = Filer
 description = Simple file writing interface.
-; Feel free to remove or change the package identifier.
-; We like to keep our own modules together.
-package = wieni
+package = Filer
 files[] = filer.class.php
 core = 7.x
 version = "0.1"
-project = "filer"
-datestamp = "1365606004"
-
