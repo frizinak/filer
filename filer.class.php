@@ -273,7 +273,7 @@ class Filer {
       return;
     }
     if (!empty($row)) {
-      db_delete('filer')->isNotNull('finished')->condition('file', $row['file'])->execute();
+      db_delete('filer')->isNotNull('finished')->condition('file', $row['file'])->condition('frid', $frid, '!=')->execute();
     }
     db_update('filer')->fields(array('finished' => time()))->condition('frid', $frid)->condition('name', $this->name)->execute();
     $this->files(NULL, TRUE);

@@ -23,9 +23,13 @@ function filer_delete_file_form_submit($form, $form_state) {
   $dest = isset($_GET['destination']) ? $_GET['destination'] : FILER_PAGE_URL;
   $filer = isset($form_state['build_info']['args'][0]) ? $form_state['build_info']['args'][0] : NULL;
   $frid = isset($form_state['build_info']['args'][1]) ? $form_state['build_info']['args'][1] : NULL;
-  if (!empty($frid) && $filer instanceof Filer) {
-    $filer->delete($frid);
+  if (!empty($frid) && $filer instanceof Filer && isset($filer->files[$frid]['file'])) {
+    drupal_set_message(t('%file was deleted.', array('%file' => $filer->files[$frid]['file'])));
+    $success = $filer->delete($frid);
   }
+  if (!isset($success) || !$success)
+    drupal_set_message(t('File could not be deleted.'), 'warning');
+
   drupal_goto($dest);
 }
 
@@ -51,8 +55,10 @@ function filer_clear_queue_form($form, $form_state, $filer) {
 function filer_clear_queue_form_submit($form, $form_state) {
   $dest = isset($_GET['destination']) ? $_GET['destination'] : FILER_PAGE_URL;
   $filer = isset($form_state['build_info']['args'][0]) ? $form_state['build_info']['args'][0] : NULL;
-  if ($filer instanceof Filer) {
+  if ($filer instanceof Filer)
     $filer->deleteQueue();
-  }
+  else
+    drupal_set_message(t('Queue could not be cleared.'), 'warning');
+
   drupal_goto($dest);
 }
