@@ -66,6 +66,15 @@ class Filer {
     return NULL;
   }
 
+  public function __isset($property) {
+    switch ($property) {
+      case 'name':
+      case 'files':
+        return TRUE;
+    }
+    return FALSE;
+  }
+
   /**
    * @param   $uri      String    Stream wrapper URI
    * @param   $options  Array     Optional: array indexed as follows:
