@@ -83,14 +83,14 @@ function filer_menu() {
     'access arguments' => array('view filer')
   );
 
-  foreach (Filer::getNames(TRUE, TRUE) as $filerName) {
-    $items[FILER_PAGE_URL . '/' . $filerName] = array(
-      'title' => $filerName,
-      'page callback' => 'filer_files_page',
-      'page arguments' => array($page_arg_offset),
-      'access arguments' => array('view ' . $filerName)
-    );
-  }
+  $items[FILER_PAGE_URL . '/%filer_filer'] = array(
+    'title' => 'Filer',
+    'title callback' => 'filer_files_page_title',
+    'title arguments' => array($page_arg_offset),
+    'page callback' => 'filer_files_page',
+    'page arguments' => array($page_arg_offset),
+    'access arguments' => array('view filer')
+  );
 
   $items[FILER_PAGE_URL . '/%filer_filer/delete/%'] = array(
     'title' => 'Delete Filer file',
@@ -121,17 +121,21 @@ function filer_filer_load($filerName) {
   return new Filer($filerName);
 }
 
+function filer_files_page_title($filer) {
+  return 'Filer: ' . $filer->name;
+}
+
 /**
  * Page callback for admin/content/filer(/FILER_NAME).
  */
-function filer_files_page($filerName = NULL) {
-  if (is_string($filerName) && !empty($filerName)) {
-    // User access handled by access arguments.
-    $filer = new Filer($filerName);
-    $files = $filer->files;
-    if (empty($files))
-      return MENU_NOT_FOUND;
-    return theme('table', filer_files_page_prepare_table($files));
+function filer_files_page($filer = NULL) {
+  if ($filer instanceof Filer) {
+    if (!user_access('view ' . $filer->name)) {
+      return MENU_ACCESS_DENIED;
+    }
+    if (empty($filer->files))
+      drupal_goto(FILER_PAGE_URL);
+    return theme('table', filer_files_page_prepare_table($filer->files));
   }
   else {
     $tables = '';
