@@ -55,10 +55,12 @@ function filer_clear_queue_form($form, $form_state, $filer) {
 function filer_clear_queue_form_submit($form, $form_state) {
   $dest = isset($_GET['destination']) ? $_GET['destination'] : FILER_PAGE_URL;
   $filer = isset($form_state['build_info']['args'][0]) ? $form_state['build_info']['args'][0] : NULL;
-  if ($filer instanceof Filer)
+  if ($filer instanceof Filer) {
+    drupal_set_message(t('%name queue was cleared.', array('%name' => $filer->name)));
     $filer->deleteQueue();
-  else
+  }
+  else {
     drupal_set_message(t('Queue could not be cleared.'), 'warning');
-
+  }
   drupal_goto($dest);
 }
