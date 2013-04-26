@@ -1,6 +1,6 @@
 <?php
 define('FILER_CRON', 'filer:');
-define('FILER_PAGE_URL', 'admin/content/filer');
+define('FILER_PAGE_URL', 'admin/structure/filer');
 
 /**
  * Implements hook_cron_queue_info().

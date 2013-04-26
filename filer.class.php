@@ -231,6 +231,7 @@ class Filer {
    */
   private function write($frid, $item, $append, $read, $finish, $cron) {
     $hook = 'filer_' . $this->name . '_cron';
+    $finished_hook = 'filer_' . $this->name . '_finished';
     $modules = module_implements($hook);
     if (empty($modules)) {
       watchdog('filer', 'No modules implement hook_%hook', array('%hook' => $hook));
@@ -252,6 +253,9 @@ class Filer {
     if ($fh = fopen($fn, $append ? 'a' : 'w')) {
       foreach ($modules as $module) {
         $return = module_invoke($module, $hook, $item, $content, $fh, $finish);
+        if ($finish) {
+          $return = module_invoke($module, $finished_hook, $this, $frid, $filer_row);
+        }
         if (is_string($return) && fwrite($fh, $return) === FALSE) {
           watchdog('filer', 'could not write to %file', array('%file' => $fn));
         }
