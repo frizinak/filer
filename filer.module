@@ -153,7 +153,6 @@ function filer_process_cron_queue($filer) {
 }
 
 function filer_batch_callback($queue_name, &$context) {
-  dsm($context);
   $queues = module_invoke_all('cron_queue_info');
   drupal_alter('cron_queue_info', $queues);
   if (!isset($queues[$queue_name])) {
