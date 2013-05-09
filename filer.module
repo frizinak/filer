@@ -44,6 +44,7 @@ function filer_permission() {
     $perms['view temp ' . $filerName] = array('title' => t('View temporary %name files.', $replace));
     $perms['delete ' . $filerName] = array('title' => t('Delete %name files.', $replace));
     $perms['clear ' . $filerName . ' queue'] = array('title' => t('Clear the %name queue.', $replace));
+    $perms['batch process ' . $filerName] = array('title' => t('Batch process %name queue.', $replace));
     $perms['download ' . $filerName] = array('title' => t('Download private %name files.', $replace));
   }
 
@@ -110,6 +111,15 @@ function filer_menu() {
     'file' => 'filer.forms.inc'
   );
 
+  $items[FILER_PAGE_URL . '/%filer_filer/batch'] = array(
+    'title' => 'Batch process queue',
+    'page callback' => 'filer_process_cron_queue',
+    'page arguments' => array($page_arg_offset),
+    'access arguments' => array('view filer'),
+    'type' => MENU_CALLBACK,
+    'file' => 'filer.forms.inc'
+  );
+
   return $items;
 }
 
@@ -123,6 +133,55 @@ function filer_filer_load($filerName) {
 
 function filer_files_page_title($filer) {
   return 'Filer: ' . $filer->name;
+}
+
+/**
+ * Uses the batch API to process the cron queue.
+ */
+function filer_process_cron_queue($filer) {
+  if (!user_access('batch process ' . $filer->name)) {
+    return MENU_ACCESS_DENIED;
+  }
+  $batch = array(
+    'title' => t('Processing data for Filer: ' . $filer->name),
+    'operations' => array(array('filer_batch_callback', array(FILER_CRON . $filer->name))),
+    'finished' => 'filer_batch_finished',
+  );
+  batch_set($batch);
+  batch_process(FILER_PAGE_URL);
+  return '';
+}
+
+function filer_batch_callback($queue_name, &$context) {
+  dsm($context);
+  $queues = module_invoke_all('cron_queue_info');
+  drupal_alter('cron_queue_info', $queues);
+  if (!isset($queues[$queue_name])) {
+    return;
+  }
+  $info = $queues[$queue_name];
+  $queue = DrupalQueue::get($queue_name);
+  if (!isset($context['sandbox']['progress'])) {
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['total'] = $queue->numberOfItems();
+  }
+  $function = $info['worker callback'];
+  $end = time() + 5;
+  while (time() < $end) {
+    if ($item = $queue->claimItem()) {
+      $function($item->data);
+      $queue->deleteItem($item);
+      $context['sandbox']['progress']++;
+      $context['finished'] = empty($context['sandbox']['total']) ? 1 : $context['sandbox']['progress'] / $context['sandbox']['total'];
+      return;
+    }
+  }
+  // Unable to claim item within 5 seconds.
+  // TODO show error
+  $context['finished'] = 1;
+}
+
+function filer_batch_finished($success, $results, $operations) {
 }
 
 /**
@@ -143,7 +202,18 @@ function filer_files_page($filer = NULL) {
       if (user_access('view ' . $filerName)) {
         $filer = new Filer($filerName);
         $files = $filer->files;
+        $remaining = $filer->numberOfItems();
         $tables .= l($filerName, FILER_PAGE_URL . '/' . $filerName, array('html' => TRUE));
+        if ($remaining > 0) {
+          $tables .= ' (' . t('!items items remaining', array('!items' => $remaining)) . ')';
+          if (user_access('batch process ' . $filerName)) {
+            $tables .= ' | ' . l(t('Run batch'), FILER_PAGE_URL . '/' . $filerName . '/batch', array('html' => TRUE));
+          }
+          if (user_access('clear ' . $filerName . ' queue')) {
+            $opts = array('html' => TRUE, 'query' => array('destination' => FILER_PAGE_URL . '/' . $filerName));
+            $tables .= ' | ' . l(t('Clear queue', array('%name' => $filerName)), FILER_PAGE_URL . '/' . $filerName . '/clear', $opts);
+          }
+        }
         $tables .= theme('table', filer_files_page_prepare_table($files));
       }
     }
@@ -162,18 +232,7 @@ function filer_files_page_prepare_table($files) {
       if (!user_access('view temp ' . $row['name']))
         continue;
       $row['finished'] = t('not finished');
-      if (user_access('clear ' . $row['name'] . ' queue')) {
-        if ($row['queued']) {
-          $opts = array('html' => TRUE, 'query' => array('destination' => FILER_PAGE_URL . '/' . $row['name']));
-          $row['actions'] = l(t('clear entire %name queue', array('%name' => $row['name'])), FILER_PAGE_URL . '/' . $row['name'] . '/clear', $opts);
-        }
-        else {
-          $row['actions'] = '-';
-        }
-      }
-      else {
-        $row['actions'] = '-';
-      }
+      $row['actions'] = '-';
     }
     else {
       $row['file'] = l($row['file'], file_create_url($row['file']));
