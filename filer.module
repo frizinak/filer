@@ -1,6 +1,6 @@
 <?php
 define('FILER_CRON', 'filer:');
-define('FILER_PAGE_URL', 'admin/content/filer');
+define('FILER_PAGE_URL', 'admin/structure/filer');
 
 /**
  * Implements hook_cron_queue_info().
@@ -77,7 +77,7 @@ function filer_file_download($uri) {
  * Implements hook_menu().
  */
 function filer_menu() {
-  $page_arg_offset = preg_match_all('/\//', FILER_PAGE_URL) + 1;
+  $page_arg_offset = preg_match_all('/\//', FILER_PAGE_URL, $matches) + 1;
   $items[FILER_PAGE_URL] = array(
     'title' => 'Filers',
     'page callback' => 'filer_files_page',
