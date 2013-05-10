@@ -1,7 +1,7 @@
 <?php
 
 /**
- * TODO write me.
+ * @todo write me.
  *
  * @param $item
  * @param $content
@@ -11,7 +11,7 @@
 function hook_filer_FILER_NAME_cron($item, $content, $fh, $finished) {}
 
 /**
- * TODO write me.
+ * @todo write me.
  *
  * @param $filer
  * @param $frid

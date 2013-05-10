@@ -58,7 +58,7 @@ function filer_file_download($uri) {
   // Once a user has download permissions on a Filer all of its files will be downloadable by that user,
   // even though he might have no download permissions for another Filer that uses the same uri.
 
-  // TODO: any way to make this call less heavy?
+  // @todo: any way to make this call less heavy?
   $filerNames = Filer::getNames(TRUE, TRUE, $uri);
   // Nothing to do with us, let it go.
   if (empty($filerNames))
@@ -125,7 +125,7 @@ function filer_menu() {
 
 /**
  * Menu object loader (%filer_filer'). Chose <MODULE>_<CLASS>_load since filer_load() would implement hook_load().
- * TODO Right choice?
+ * @todo Right choice?
  */
 function filer_filer_load($filerName) {
   return new Filer($filerName);
@@ -152,6 +152,9 @@ function filer_process_cron_queue($filer) {
   return '';
 }
 
+/**
+ * Batch callback.
+ */
 function filer_batch_callback($queue_name, &$context) {
   $queues = module_invoke_all('cron_queue_info');
   drupal_alter('cron_queue_info', $queues);
@@ -176,10 +179,13 @@ function filer_batch_callback($queue_name, &$context) {
     }
   }
   // Unable to claim item within 5 seconds.
-  // TODO show error
+  // @todo show error
   $context['finished'] = 1;
 }
 
+/**
+ * Batch finished callback, required but not used for the time being.
+ */
 function filer_batch_finished($success, $results, $operations) {
 }
 

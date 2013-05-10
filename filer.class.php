@@ -3,22 +3,22 @@
 class Filer {
 
   /**
-   * @const String  File extension for temporary files.
+   * @const string  File extension for temporary files.
    */
   CONST TEMP_EXT = '.tmp';
 
   /**
-   * @var   String  Filer identifier.
+   * @var   string  Filer identifier.
    */
   private $name;
 
   /**
    * Fetches all Filer names.
    *
-   * @param   $finished     Bool        Include name even if all tasks within that filer are completed.
-   * @param   $nonQueued    Bool        Include names of non-queued tasks.
-   * @param   $uri          String|Bool Only return names of tasks that have a specific $uri, FALSE to ignore.
-   * @return                Array
+   * @param bool        $finished   Include name even if all tasks within that filer are completed.
+   * @param bool        $nonQueued  Include names of non-queued tasks.
+   * @param string|bool $uri        Only return names of tasks that have a specific $uri, FALSE to ignore.
+   * @return Array
    */
   public static function getNames($finished = FALSE, $nonQueued = FALSE, $uri = FALSE) {
     $q = db_select('filer', 'f')->distinct()->fields('f', array('name'));
@@ -44,8 +44,9 @@ class Filer {
   }
 
   /**
-   * @param   $name   String          Filer name.
-   * @throws          ErrorException  If $name is a non-empty string.
+   * @param string $name  Filer name.
+   *
+   * @throws ErrorException if $name is a non-empty string.
    */
   public function __construct($name) {
     if (!is_string($name) || empty($name))
@@ -76,16 +77,16 @@ class Filer {
   }
 
   /**
-   * @param   $uri      String    Stream wrapper URI
-   * @param   $options  Array     Optional: array indexed as follows:
-   *                              - items   Array   Each item is passed to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
-   *                              - append  Bool    Whether to append or overwrite the contents of $uri on each callback.
-   *                              -                 e.g. CSV: append => TRUE, JSON: append => FALSE.
-   *                              - read    Bool    Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
-   * @param   $enqueue  Bool      If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME_cron().
-   *                              - Otherwise manual calling of Filer::run() is required to fill our file.
-   *                              - @Note: if FALSE $options will be ignored.
-   * @return            Bool|Int  frid on success, FALSE on failure.
+   * @param string $uri     Stream wrapper URI
+   * @param array  $options Optional: array indexed as follows:
+   *                         - items   Array   Each item is passed to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
+   *                         - append  bool    Whether to append or overwrite the contents of $uri on each callback.
+   *                         -                 e.g. CSV: append => TRUE, JSON: append => FALSE.
+   *                         - read    bool    Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
+   * @param bool   $enqueue If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME_cron().
+   *                         - Otherwise manual calling of Filer::run() is required to fill our file.
+   *                         - @Note: if FALSE $options will be ignored.
+   * @return bool|int       Filer id on success, FALSE on failure.
    */
   public function add($uri, $options, $enqueue = TRUE) {
     $uri = file_stream_wrapper_uri_normalize($uri);
@@ -121,8 +122,8 @@ class Filer {
   /**
    * Delete a file from both db and the filesystem.
    *
-   * @param   $frid   Int   The Filer id.
-   * @return          Bool  TRUE if the file was deleted from the filesystem or did not exist, FALSE otherwise.
+   * @param int $frid   The Filer id.
+   * @return bool       TRUE if the file was deleted from the filesystem or did not exist, FALSE otherwise.
    */
   public function delete($frid) {
     $row = $this->files($frid);
@@ -139,9 +140,9 @@ class Filer {
   /**
    * Get a list of all files, or the file specified by $frid
    *
-   * @param   $frid   Int     The Filer id.
-   * @param   $reset  Bool    Reset the drupal_static cache.
-   * @return          mixed   If $frid was specified: single db-row array, otherwise an array of db-row arrays.
+   * @param int  $frid    The Filer id.
+   * @param bool $reset   Reset the drupal_static cache.
+   * @return mixed        If $frid was specified: single db-row array, otherwise an array of db-row arrays.
    */
   public function files($frid = NULL, $reset = FALSE) {
     if (!isset($frid)) {
@@ -181,14 +182,17 @@ class Filer {
   }
 
   /**
-   * @return  Int   An alias for DrupalQueueInterface::numberOfItems();
+   * An alias for DrupalQueueInterface::numberOfItems().
+   *
+   * @return int  Amount of items in the queue.
    */
   public function numberOfItems() {
     return DrupalQueue::get(FILER_CRON . $this->name)->numberOfItems();
   }
 
   /**
-   * @return  void  An alias for DrupalQueueInterface::deleteQueue();
+   * An alias for DrupalQueueInterface::deleteQueue().
+   * Removes all remaining items in the queue.
    */
   public function deleteQueue() {
     DrupalQueue::get(FILER_CRON . $this->name)->deleteQueue();
@@ -198,11 +202,11 @@ class Filer {
    * Manual runner. If a task was added (Filer::add()) with param $enqueue = FALSE, use this method to invoke hook_filer_FILER_NAME_cron().
    * Calling this for a queued task will do nothing.
    *
-   * @param   $frid   Int     The Filer id.
-   * @param   $item   mixed   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
-   * @param   $append Bool    Whether to append or overwrite the file. @see Filer::add().
-   * @param   $read   Bool    Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, ...). @see Filer::add().
-   * @return          Bool    FALSE on failure.
+   * @param int   $frid   The Filer id.
+   * @param mixed $item   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
+   * @param bool  $append Whether to append or overwrite the file. @see Filer::add().
+   * @param bool  $read   Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, ...). @see Filer::add().
+   * @return bool         FALSE on failure.
    */
   public function run($frid, $item, $append = TRUE, $read = FALSE) {
     return $this->write($frid, $item, $append, $read, TRUE, FALSE);
@@ -221,13 +225,13 @@ class Filer {
    * Passes the item, content (if requested), filehandle and the queue status to hook_filer_FILER_NAME_cron()
    * and writes the return value (if any) to the file.
    *
-   * @param   $frid     Int     The frid.
-   * @param   $item     mixed   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
-   * @param   $append   Bool    TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
-   * @param   $read     Bool    Read the file prior to writing and pass the contents to the hooks.
-   * @param   $finish   Bool    Indicates Whether this is the last item in the queue.
-   * @param   $cron     Bool    Indicates whether we are called from cron or manually.
-   * @return            Bool
+   * @param int   $frid   The frid.
+   * @param mixed $item   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
+   * @param bool  $append TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
+   * @param bool  $read   Read the file prior to writing and pass the contents to the hooks.
+   * @param bool  $finish Indicates Whether this is the last item in the queue.
+   * @param bool  $cron   Indicates whether we are called from cron or manually.
+   * @return bool
    */
   private function write($frid, $item, $append, $read, $finish, $cron) {
     $hook = 'filer_' . $this->name . '_cron';
@@ -276,8 +280,8 @@ class Filer {
    * Finishes the file: rename temporary file to permanent file if necessary
    *                  - and merge identical rows into 1 (given they're all finished and their uri is the same).
    *
-   * @param   $frid   Int   The frid.
-   * @param   $temp   Bool  If TRUE rename file.tmp to file.
+   * @param int  $frid  The frid.
+   * @param bool $temp  If TRUE rename file.tmp to file.
    */
   private function finish($frid, $temp = TRUE) {
     $row = $this->files($frid);
@@ -295,9 +299,9 @@ class Filer {
   /**
    * Adds a row to the filer table.
    *
-   * @param   $uri      String      Stream wrapper uri.
-   * @param   $queued   Bool        Mark this task as queued.
-   * @return            Bool|Int    frid on success, FALSE on failure.
+   * @param string $uri     Stream wrapper uri.
+   * @param bool   $queued  Mark this task as queued.
+   * @return bool|int       Filer id on success, FALSE on failure.
    */
   private function addRow($uri, $queued) {
     $insert = array('name' => $this->name, 'file' => $uri, 'queued' => (int)$queued);
@@ -313,7 +317,7 @@ class Filer {
   /**
    * Deletes a row from the filer table.
    *
-   * @param   $frid   Int   The frid.
+   * @param int $frid   The frid.
    */
   private function deleteRow($frid) {
     db_delete('filer')->condition('frid', $frid)->condition('name', $this->name)->execute();
