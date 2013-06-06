@@ -66,7 +66,7 @@ function hook_filer_example_one_last($item, $fh, $info) {
 }
 
 /**
- * Implements hook_filer_FILER_NAME_cron();
+ * Implements hook_filer_FILER_NAME_finished();
  * Called after renaming the temporary file.
  * Return value is ignored.
  */
@@ -126,14 +126,12 @@ function hook_filer_example_two_last($item, $fh, $info) {
 }
 
 /**
- * Implements hook_filer_FILER_NAME_cron();
+ * Implements hook_filer_FILER_NAME_finished();
  * Called after every run.
  */
 function hook_filer_example_two_finished($info) {
   // file written, move to public dir (for example)
 }
-
-
 
 ```
 
