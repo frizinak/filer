@@ -90,6 +90,12 @@ class Filer {
    */
   public function add($uri, $options, $enqueue = TRUE) {
     $uri = file_stream_wrapper_uri_normalize($uri);
+    $valid_stream_wrappers = stream_get_wrappers();
+    $scheme = file_uri_scheme($uri);
+    if (!$scheme || !in_array($scheme, $valid_stream_wrappers)) {
+      watchdog('filer', 'Invalid uri %uri (stream wrapper not registered: %scheme)', array('%uri' => $uri, '%scheme' => $scheme));
+      return FALSE;
+    }
     if (($enqueue && (empty($options['items']) || !is_array($options['items']))) || empty($uri)) {
       watchdog('filer', 'Invalid arguments passed to Filer::add().');
       return FALSE;
@@ -109,7 +115,7 @@ class Filer {
         $q->createItem(array(
           'name' => $this->name,
           'frid' => $frid,
-          'status' => $i == $item_count ? 'last' : ($i == 1 ? 'first' : ''),
+          'status' => $i == $item_count ? FILER_STATUS_LAST : ($i == 1 ? FILER_STATUS_FIRST : ''),
           'read' => $options['read'],
           'append' => $options['append'],
           'item' => $item
@@ -135,6 +141,25 @@ class Filer {
       }
     }
     return FALSE;
+  }
+
+  /**
+   * @param bool $finishedOnly    Only delete finished files, if FALSE: delete all and clear this Filers queue.
+   * @return bool                 FALSE if we were unable to delete any of the files, TRUE otherwise @see Filer::delete().
+   */
+  public function deleteAll($finishedOnly = TRUE) {
+    $success = TRUE;
+    if (!$finishedOnly) {
+      $this->deleteQueue();
+    }
+    foreach ($this->files() as $file) {
+      var_dump($finishedOnly && !empty($file['finished']), $file['finished']);
+      if ($finishedOnly && empty($file['finished'])) {
+        continue;
+      }
+      $success = $this->delete($file['frid']) ? $success : FALSE;
+    }
+    return $success;
   }
 
   /**
@@ -209,7 +234,7 @@ class Filer {
    * @return bool         FALSE on failure.
    */
   public function run($frid, $item, $append = TRUE, $read = FALSE) {
-    return $this->write($frid, $item, $append, $read, TRUE, FALSE);
+    return $this->write($frid, $item, $append, $read, FILER_STATUS_MANUAL);
   }
 
   /**
@@ -218,33 +243,42 @@ class Filer {
    * @private
    */
   public function _run($frid, $item, $status, $append = TRUE, $read = FALSE) {
-    $this->write($frid, $item, $append, $read, $status === 'last', TRUE);
+    $this->write($frid, $item, $append, $read, $status);
   }
 
   /**
    * Passes the item, content (if requested), filehandle and the queue status to hook_filer_FILER_NAME_cron()
    * and writes the return value (if any) to the file.
    *
-   * @param int   $frid   The frid.
-   * @param mixed $item   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
-   * @param bool  $append TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
-   * @param bool  $read   Read the file prior to writing and pass the contents to the hooks.
-   * @param bool  $finish Indicates Whether this is the last item in the queue.
-   * @param bool  $cron   Indicates whether we are called from cron or manually.
+   * @param int    $frid   Filer id.
+   * @param mixed  $item   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
+   * @param bool   $append TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
+   * @param bool   $read   Read the file prior to writing and pass the contents to the hooks.
+   * @param string $status Status of the current file:
+   *                       -  FILER_STATUS_FIRST: first item,
+   *                       -  FILER_STATUS_LAST: last item,
+   *                       -  FILER_STATUS_MANUAL: non-queued or
+   *                       -  An empty string: anything in between.
    * @return bool
    */
-  private function write($frid, $item, $append, $read, $finish, $cron) {
+  private function write($frid, $item, $append, $read, $status) {
     $hook = 'filer_' . $this->name . '_cron';
+    $first_hook = 'filer_' . $this->name . '_first';
+    $last_hook = 'filer_' . $this->name . '_last';
     $finished_hook = 'filer_' . $this->name . '_finished';
     $modules = module_implements($hook);
+    $first_modules = module_implements($first_hook);
+    $last_modules = module_implements($last_hook);
+    $finished_modules = module_implements($finished_hook);
+
     if (empty($modules)) {
       watchdog('filer', 'No modules implement hook_%hook', array('%hook' => $hook));
       return FALSE;
     }
     $filer_row = $this->files($frid);
-    if (empty($filer_row) || (!empty($filer_row['queued']) && !$cron))
+    if (empty($filer_row) || (!empty($filer_row['queued']) && $status !== FILER_STATUS_MANUAL))
       return FALSE;
-    $fn = $filer_row['file'] . ($cron ? self::TEMP_EXT : '');
+    $fn = $filer_row['file'] . ($status === FILER_STATUS_MANUAL ? self::TEMP_EXT : '');
     $dir = dirname($fn);
     if (!file_prepare_directory($dir, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS)) {
       watchdog('filer', 'Could not prepare directory (%path)', array('%path' => $dir));
@@ -254,25 +288,46 @@ class Filer {
     if ($read && file_exists($fn)) {
       $content = file_get_contents($fn);
     }
+    $return = '';
+    $info = array(
+      'content' => $content,
+      'status' => $status,
+      'frid' => $frid,
+    );
     if ($fh = fopen($fn, $append ? 'a' : 'w')) {
+      if ($status === 'first') {
+        foreach ($first_modules as $module) {
+          $return .= (string)module_invoke($module, $first_hook, $item, $fh, $info);
+        }
+      }
+
       foreach ($modules as $module) {
-        $return = module_invoke($module, $hook, $item, $content, $fh, $finish);
-        if ($finish) {
-          $return = module_invoke($module, $finished_hook, $this, $frid, $filer_row);
+        $return .= (string)module_invoke($module, $hook, $item, $fh, $info);
+      }
+
+      if ($status === FILER_STATUS_LAST) {
+        foreach ($last_modules as $module) {
+          $return .= (string)module_invoke($module, $last_hook, $item, $fh, $info);
         }
-        if (is_string($return) && fwrite($fh, $return) === FALSE) {
-          watchdog('filer', 'could not write to %file', array('%file' => $fn));
-        }
+      }
+
+      if (!empty($return) && fwrite($fh, $return) === FALSE) {
+        watchdog('filer', 'could not write to %file', array('%file' => $fn));
       }
       fclose($fh);
     }
     else {
       watchdog('filer', 'could not open file: %file', array('%file' => $fn));
-      if ($finish)
+      if (in_array($status, array(FILER_STATUS_MANUAL, FILER_STATUS_LAST))) {
         $this->sync();
+      }
     }
-    if ($finish)
-      $this->finish($frid, $cron);
+    if (in_array($status, array(FILER_STATUS_MANUAL, FILER_STATUS_LAST))) {
+      $this->finish($frid, FALSE);
+      foreach ($finished_modules as $module) {
+        module_invoke($module, $finished_hook, $info);
+      }
+    }
     return TRUE;
   }
 
@@ -280,7 +335,7 @@ class Filer {
    * Finishes the file: rename temporary file to permanent file if necessary
    *                  - and merge identical rows into 1 (given they're all finished and their uri is the same).
    *
-   * @param int  $frid  The frid.
+   * @param int  $frid  Filer id.
    * @param bool $temp  If TRUE rename file.tmp to file.
    */
   private function finish($frid, $temp = TRUE) {
@@ -317,7 +372,7 @@ class Filer {
   /**
    * Deletes a row from the filer table.
    *
-   * @param int $frid   The frid.
+   * @param int $frid   Filer id.
    */
   private function deleteRow($frid) {
     db_delete('filer')->condition('frid', $frid)->condition('name', $this->name)->execute();

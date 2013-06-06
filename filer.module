@@ -2,6 +2,10 @@
 define('FILER_CRON', 'filer:');
 define('FILER_PAGE_URL', 'admin/structure/filer');
 
+define('FILER_STATUS_FIRST','first');
+define('FILER_STATUS_LAST','last');
+define('FILER_STATUS_MANUAL','manual');
+
 /**
  * Implements hook_cron_queue_info().
  */
@@ -125,6 +129,7 @@ function filer_menu() {
 
 /**
  * Menu object loader (%filer_filer'). Chose <MODULE>_<CLASS>_load since filer_load() would implement hook_load().
+ *
  * @todo Right choice?
  */
 function filer_filer_load($filerName) {
