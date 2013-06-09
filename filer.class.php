@@ -22,12 +22,15 @@ class Filer {
    */
   public static function getNames($finished = FALSE, $nonQueued = FALSE, $uri = FALSE) {
     $q = db_select('filer', 'f')->distinct()->fields('f', array('name'));
-    if (!$finished)
+    if (!$finished) {
       $q->isNull('f.finished');
-    if (!$nonQueued)
+    }
+    if (!$nonQueued) {
       $q->condition('f.queued', 1);
-    if ($uri !== FALSE)
+    }
+    if ($uri !== FALSE) {
       $q->condition('f.file', file_stream_wrapper_uri_normalize($uri));
+    }
     return array_keys($q->execute()->fetchAllAssoc('name', PDO::FETCH_ASSOC));
   }
 
@@ -49,8 +52,9 @@ class Filer {
    * @throws ErrorException if $name is a non-empty string.
    */
   public function __construct($name) {
-    if (!is_string($name) || empty($name))
+    if (!is_string($name) || empty($name)) {
       throw new ErrorException('Filer::__construct($name) requires a non-empty string as first param.');
+    }
     $this->name = $name;
     $this->sync();
   }
@@ -103,8 +107,10 @@ class Filer {
     $options = (array)$options;
     $options += array('items' => array(), 'append' => TRUE, 'read' => TRUE);
 
-    if (!$frid = $this->addRow($uri, $enqueue))
+    if (!$frid = $this->addRow($uri, $enqueue)) {
+      watchdog('filer', 'Unable to create a new database row in table filer');
       return FALSE;
+    }
 
     if ($enqueue) {
       $q = DrupalQueue::get(FILER_CRON . $this->name);
@@ -118,7 +124,7 @@ class Filer {
           'status' => $i == $item_count ? FILER_STATUS_LAST : ($i == 1 ? FILER_STATUS_FIRST : ''),
           'read' => $options['read'],
           'append' => $options['append'],
-          'item' => $item
+          'item' => $item,
         ));
       }
     }
@@ -248,6 +254,7 @@ class Filer {
 
   /**
    * Passes the item, content (if requested), filehandle and the queue status to hook_filer_FILER_NAME_cron()
+   * (and hook_filer_FILER_NAME_first or hook_filer_FILER_NAME_last depending on $status)
    * and writes the return value (if any) to the file.
    *
    * @param int    $frid   Filer id.
@@ -255,80 +262,99 @@ class Filer {
    * @param bool   $append TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
    * @param bool   $read   Read the file prior to writing and pass the contents to the hooks.
    * @param string $status Status of the current file:
-   *                       -  FILER_STATUS_FIRST: first item,
-   *                       -  FILER_STATUS_LAST: last item,
+   *                       -  FILER_STATUS_FIRST: first item (hook_filer_FILER_NAME_first will also be invoked),
+   *                       -  FILER_STATUS_LAST: last item (hook_filer_FILER_NAME_last will also be invoked
+   *                       -                                and hook_filer_FILER_NAME_finished when the filewriting has stopped
+   *                       -                                and the file has been renamed),
    *                       -  FILER_STATUS_MANUAL: non-queued or
    *                       -  An empty string: anything in between.
    * @return bool
    */
   private function write($frid, $item, $append, $read, $status) {
     $hook = 'filer_' . $this->name . '_cron';
-    $first_hook = 'filer_' . $this->name . '_first';
-    $last_hook = 'filer_' . $this->name . '_last';
-    $finished_hook = 'filer_' . $this->name . '_finished';
     $modules = module_implements($hook);
-    $first_modules = module_implements($first_hook);
-    $last_modules = module_implements($last_hook);
-    $finished_modules = module_implements($finished_hook);
 
     if (empty($modules)) {
-      watchdog('filer', 'No modules implement hook_%hook', array('%hook' => $hook));
       return FALSE;
     }
     $filer_row = $this->files($frid);
-    if (empty($filer_row) || (!empty($filer_row['queued']) && $status !== FILER_STATUS_MANUAL))
+    if (empty($filer_row) || (!empty($filer_row['queued']) && $status === FILER_STATUS_MANUAL)) {
       return FALSE;
-    $fn = $filer_row['file'] . ($status === FILER_STATUS_MANUAL ? self::TEMP_EXT : '');
+    }
+    $fn = $filer_row['file'] . ($status !== FILER_STATUS_MANUAL ? self::TEMP_EXT : '');
     $dir = dirname($fn);
     if (!file_prepare_directory($dir, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS)) {
       watchdog('filer', 'Could not prepare directory (%path)', array('%path' => $dir));
       return FALSE;
     }
-    $content = '';
-    if ($read && file_exists($fn)) {
-      $content = file_get_contents($fn);
+    $content = $old_content = FALSE;
+    if ($read) {
+      file_exists($filer_row['file']) && $old_content = file_get_contents($filer_row['file']);
+      file_exists($fn) && $content = file_get_contents($fn);
     }
-    $return = '';
     $info = array(
+      'old content' => $old_content,
       'content' => $content,
       'status' => $status,
       'frid' => $frid,
     );
-    if ($fh = fopen($fn, $append ? 'a' : 'w')) {
-      if ($status === 'first') {
-        foreach ($first_modules as $module) {
-          $return .= (string)module_invoke($module, $first_hook, $item, $fh, $info);
-        }
-      }
 
-      foreach ($modules as $module) {
-        $return .= (string)module_invoke($module, $hook, $item, $fh, $info);
-      }
-
-      if ($status === FILER_STATUS_LAST) {
-        foreach ($last_modules as $module) {
-          $return .= (string)module_invoke($module, $last_hook, $item, $fh, $info);
-        }
-      }
-
-      if (!empty($return) && fwrite($fh, $return) === FALSE) {
-        watchdog('filer', 'could not write to %file', array('%file' => $fn));
-      }
-      fclose($fh);
+    if ($status === FILER_STATUS_FIRST) {
+      $first_hook = 'filer_' . $this->name . '_first';
+      $first_modules = module_implements($first_hook);
+      $this->invoke($first_modules, $first_hook, $append, $read, $fn, $item, $info);
     }
-    else {
-      watchdog('filer', 'could not open file: %file', array('%file' => $fn));
-      if (in_array($status, array(FILER_STATUS_MANUAL, FILER_STATUS_LAST))) {
-        $this->sync();
-      }
+    $this->invoke($modules, $hook, $append, $read, $fn, $item, $info);
+    if ($status === FILER_STATUS_LAST) {
+      $last_hook = 'filer_' . $this->name . '_last';
+      $last_modules = module_implements($last_hook);
+      $this->invoke($last_modules, $last_hook, $append, $read, $fn, $item, $info);
     }
+
     if (in_array($status, array(FILER_STATUS_MANUAL, FILER_STATUS_LAST))) {
-      $this->finish($frid, FALSE);
+      $this->sync();
+    }
+
+    if (in_array($status, array(FILER_STATUS_MANUAL, FILER_STATUS_LAST))) {
+      $this->finish($frid, $status !== FILER_STATUS_MANUAL);
+      $finished_hook = 'filer_' . $this->name . '_finished';
+      $finished_modules = module_implements($finished_hook);
       foreach ($finished_modules as $module) {
         module_invoke($module, $finished_hook, $info);
       }
     }
     return TRUE;
+  }
+
+  /**
+   * Invokes the given hook on the given modules and writes their return value to the file.
+   * If $read = TRUE the entire file will be read and updated in $info['content'];
+   * We use file_get_contents to avoid any discrepancy caused when a hook manually writes to the file instead of returning a string.
+   *
+   * @param array  $modules  Array of module names.
+   * @param string $hook     Hook to invoke on every module in $modules
+   * @param bool   $append   Boolean indicating what mode to open the file in.
+   * @param bool   $read     Boolean indicating whether to read the file after every write.
+   * @param string $fn       Filename
+   * @param mixed  $item     @see Filer::write().
+   * @param array  $info     @see Filer::write().
+   */
+  private function invoke($modules, $hook, $append, $read, $fn, $item, &$info) {
+    foreach ($modules as $module) {
+      if ($fh = fopen($fn, $append ? 'a' : 'w')) {
+        $content = (string)module_invoke($module, $hook, $item, $fh, $info);
+        if (!empty($content) && fwrite($fh, $content) === FALSE) {
+          watchdog('filer', 'could not write to %file', array('%file' => $fn));
+        }
+        if ($read) {
+          $info['content'] = file_get_contents($fn);
+        }
+        fclose($fh);
+      }
+      else {
+        watchdog('filer', 'could not open file: %file', array('%file' => $fn));
+      }
+    }
   }
 
   /**

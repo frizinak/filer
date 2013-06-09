@@ -17,12 +17,12 @@ function filer_schema() {
       'name' => array(
         'description' => 'Identifier.',
         'type' => 'varchar',
-        'length' => '255'
+        'length' => '255',
       ),
       'file' => array(
         'description' => 'Path to file.',
         'type' => 'varchar',
-        'length' => '255'
+        'length' => '255',
       ),
       'finished' => array(
         'description' => 'Date the file was finished.',
@@ -43,7 +43,7 @@ function filer_schema() {
     'primary key' => array('frid'),
     'indexes' => array(
       'frid' => array('frid'),
-      'name' => array('name')
+      'name' => array('name'),
     )
   );
 
