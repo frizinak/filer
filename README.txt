@@ -4,7 +4,6 @@ filer
 Drupal module to store large amounts of data in files (csv, json, ...).
 
 Usage examples:
-```php
 <?php
 $nids = array_keys(db_select('node', 'n')
   ->fields('n', array('nid'))
@@ -141,6 +140,6 @@ function hook_filer_example_two_finished($info) {
 // file written, move to public dir (for example)
 }
 ?>
-```
+
 
 Sponsored by [wieni](http://wieni.be).
