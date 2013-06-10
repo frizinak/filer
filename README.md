@@ -5,7 +5,7 @@ Drupal module to store large amounts of data in files (csv, json, ...).
 
 Usage examples:
 ```php
-
+<?php
 $nids = array_keys(db_select('node', 'n')
   ->fields('n', array('nid'))
   ->condition('n.type', 'my_content_type')
@@ -47,10 +47,10 @@ function hook_filer_example_one_first($item, $fh, $info) {
 }
 
 /**
- * Implements hook_filer_FILER_NAME_cron();
+ * Implements hook_filer_FILER_NAME();
  * Called on every item (including the first and last)
  */
-function hook_filer_example_one_cron($item, $fh, $info) {
+function hook_filer_example_one($item, $fh, $info) {
   fputcsv($fh, node_to_array(node_load($item)));
   /* or */
   return implode(',', node_to_array(node_load($item))) . PHP_EOL; // For the purposes of this example (for a real csv fputcsv is the way to go).
@@ -71,7 +71,7 @@ function hook_filer_example_one_last($item, $fh, $info) {
  * Return value is ignored.
  */
 function hook_filer_example_one_finished($info) {
-  // Send a mail to client to notify about our newly created csv.
+// Send a mail to client to notify about our newly created csv.
 }
 
 // Get all files and delete them:
@@ -91,48 +91,56 @@ $filer->deleteAll(TRUE);
 
 $filer = new Filer('example_two');
 $options = array();
-// Third param $enqueue is FALSE => $options is ignored and cron / batch will not be calling our hooks and thus not writing to our file.
+// Third param $enqueue is FALSE so $options is ignored and cron / batch will not be calling our hooks and thus not writing to our file.
 // File inside private dir => can use Filer permissions to give certain roles access to this file.
 $frid = $filer->add('private://example_two.json', $options, FALSE);
-// Write to our file:
-$filer->run($frid, reset($nids), $append = FALSE, $read = TRUE);
+
+// Write to our file and also invoke hook_filer_FILER_NAME_first:
+$filer->run($frid, $nids[0], $append = FALSE, $read = TRUE, FILER_STATUS_FIRST);
+// Write to our file and don't invoke any hooks (other than hook_filer_FILER_NAME):
+$count = count($nids);
+for ($i = 1; $i < $count - 1; $i++) {
+  $filer->run($frid, $nids[$i], $append = FALSE, $read = TRUE, FILER_STATUS_NORMAL);
+}
+// Write to our file and also invoke hook_filer_FILER_NAME_last and hook_filer_FILER_NAME_finished
+// This step is required to finish the file (rename from example_two.json.tmp to example_two.json):
+$filer->run($frid, $nids[$count - 1], $append = FALSE, $read = TRUE, FILER_STATUS_LAST);
+
+
 
 /**
  * Implements hook_filer_FILER_NAME_first();
- * Not called for manual files
  */
 function hook_filer_example_two_first($item, $fh, $info) {
 }
 
 /**
- * Implements hook_filer_FILER_NAME_cron();
+ * Implements hook_filer_FILER_NAME();
  * Called on every run.
  */
-function hook_filer_example_two_cron($item, $fh, $info) {
+function hook_filer_example_two($item, $fh, $info) {
   $node = node_load($item);
-  // Get the stored array of nodes.
+// Get the stored array of nodes.
   $stored_object = drupal_json_decode($info['content']);
-  // Update / Insert new node.
+// Update / Insert new node.
   $stored_object[$item] = $node;
-  // Write to file (not appending).
+// Write to file (not appending).
   return drupal_json_encode($stored_object);
 }
 
 /**
  * Implements hook_filer_FILER_NAME_last();
- * Not called for manual files
  */
 function hook_filer_example_two_last($item, $fh, $info) {
 }
 
 /**
  * Implements hook_filer_FILER_NAME_finished();
- * Called after every run.
  */
 function hook_filer_example_two_finished($info) {
-  // file written, move to public dir (for example)
+// file written, move to public dir (for example)
 }
-
+?>
 ```
 
 Sponsored by [wieni](http://wieni.be).

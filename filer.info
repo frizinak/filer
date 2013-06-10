@@ -3,4 +3,4 @@ description = Simple file writing interface.
 package = Filer
 files[] = filer.class.php
 core = 7.x
-version = "0.2"
+version = "0.3"

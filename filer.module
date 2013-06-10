@@ -2,9 +2,10 @@
 define('FILER_CRON', 'filer:');
 define('FILER_PAGE_URL', 'admin/structure/filer');
 
-define('FILER_STATUS_FIRST', 'first');
-define('FILER_STATUS_LAST', 'last');
-define('FILER_STATUS_MANUAL', 'manual');
+define('FILER_STATUS_NORMAL', 0);
+define('FILER_STATUS_FIRST', 1);
+define('FILER_STATUS_LAST', 2);
+define('FILER_STATUS_MANUAL', 4);
 
 /**
  * Implements hook_cron_queue_info().
@@ -33,7 +34,7 @@ function filer_cron_callback($data) {
   }
   // Create a new Filer object and pass DrupalQueue data to Filer::_run().
   $filer = new Filer($data['name']);
-  $filer->_run($data['frid'], $data['item'], $data['status'], $data['append'], $data['read']);
+  $filer->_run($data['frid'], $data['item'], $data['append'], $data['read'], $data['status']);
 }
 
 /**
@@ -125,6 +126,12 @@ function filer_menu() {
     'file' => 'filer.forms.inc',
   );
 
+  $items[FILER_PAGE_URL . '/sync'] = array(
+    'title' => 'Synchronize filers',
+    'page callback' => 'filer_sync',
+    'access arguments' => array('view filer'),
+  );
+
   return $items;
 }
 
@@ -139,6 +146,17 @@ function filer_filer_load($filerName) {
 
 function filer_files_page_title($filer) {
   return 'Filer: ' . $filer->name;
+}
+
+/**
+ * Synchronize all filers
+ *
+ * @see Filer::synchronize()
+ */
+function filer_sync() {
+  Filer::synchronize();
+  drupal_set_message('All filers synchronized');
+  drupal_goto(FILER_PAGE_URL);
 }
 
 /**
@@ -237,28 +255,40 @@ function filer_files_page($filer = NULL) {
  * Converts an array of FilerFiles to clean table rows.
  */
 function filer_files_page_prepare_table($files) {
-  $header = array(t('Filer id'), t('Name'), t('File'), t('Date finished'), t('Queued'), t('Actions'));
+  $header = array(t('File'), t('Date finished'), t('Actions'));
   $rows = array();
   foreach ($files as $row) {
-    if (empty($row['finished'])) {
+    if (empty($row['finished']) && !empty($row['queued'])) {
       if (!user_access('view temp ' . $row['name'])) {
         continue;
       }
       $row['finished'] = t('not finished');
       $row['actions'] = '-';
     }
-    else {
-      $row['file'] = l($row['file'], file_create_url($row['file']));
-      $row['finished'] = format_date($row['finished'], 'medium');
-      $opts = array('query' => array('destination' => FILER_PAGE_URL . '/' . $row['name']));
+    else if (empty($row['queued'])) {
+      $row['finished'] = t('not finished');
       if (user_access('delete ' . $row['name'])) {
+        $opts = array('query' => array('destination' => FILER_PAGE_URL . '/' . $row['name']));
         $row['actions'] = l(t('delete'), FILER_PAGE_URL . '/' . $row['name'] . '/delete/' . $row['frid'], $opts);
       }
       else {
         $row['actions'] = '-';
       }
     }
-    $row['queued'] = $row['queued'] ? t('Yes') : t('No');
+    else {
+      $row['file'] = l($row['file'], file_create_url($row['file']));
+      $row['finished'] = format_date($row['finished'], 'medium');
+      if (user_access('delete ' . $row['name'])) {
+        $opts = array('query' => array('destination' => FILER_PAGE_URL . '/' . $row['name']));
+        $row['actions'] = l(t('delete'), FILER_PAGE_URL . '/' . $row['name'] . '/delete/' . $row['frid'], $opts);
+      }
+      else {
+        $row['actions'] = '-';
+      }
+    }
+    unset($row['queued']);
+    unset($row['frid']);
+    unset($row['name']);
     $rows[] = $row;
   }
   return array('header' => $header, 'rows' => $rows);

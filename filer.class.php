@@ -83,11 +83,11 @@ class Filer {
   /**
    * @param string $uri     Stream wrapper URI
    * @param array  $options Optional: array indexed as follows:
-   *                         - items   Array   Each item is passed to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
+   *                         - items   Array   Each item is passed to hook_filer_FILER_NAME($item, $fh, $info).
    *                         - append  bool    Whether to append or overwrite the contents of $uri on each callback.
    *                         -                 e.g. CSV: append => TRUE, JSON: append => FALSE.
-   *                         - read    bool    Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, $fh, $status).
-   * @param bool   $enqueue If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME_cron().
+   *                         - read    bool    Whether to pass the contents of the file to hook_filer_FILER_NAME($item, $fh, $info).
+   * @param bool   $enqueue If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME().
    *                         - Otherwise manual calling of Filer::run() is required to fill our file.
    *                         - @Note: if FALSE $options will be ignored.
    * @return bool|int       Filer id on success, FALSE on failure.
@@ -121,7 +121,7 @@ class Filer {
         $q->createItem(array(
           'name' => $this->name,
           'frid' => $frid,
-          'status' => $i == $item_count ? FILER_STATUS_LAST : ($i == 1 ? FILER_STATUS_FIRST : ''),
+          'status' => $i == $item_count ? FILER_STATUS_LAST : ($i == 1 ? FILER_STATUS_FIRST : FILER_STATUS_NORMAL),
           'read' => $options['read'],
           'append' => $options['append'],
           'item' => $item,
@@ -230,17 +230,18 @@ class Filer {
   }
 
   /**
-   * Manual runner. If a task was added (Filer::add()) with param $enqueue = FALSE, use this method to invoke hook_filer_FILER_NAME_cron().
+   * Manual runner. If a task was added (Filer::add()) with param $enqueue = FALSE, use this method to invoke hook_filer_FILER_NAME().
    * Calling this for a queued task will do nothing.
    *
    * @param int   $frid   The Filer id.
-   * @param mixed $item   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
+   * @param mixed $item   Single item to pass to hook_filer_FILER_NAME().
    * @param bool  $append Whether to append or overwrite the file. @see Filer::add().
-   * @param bool  $read   Whether to pass the contents of the file to hook_filer_FILER_NAME_cron($item, $content, ...). @see Filer::add().
+   * @param bool  $read   Whether to pass the contents of the file to hook_filer_FILER_NAME(). @see Filer::add().
+   * @param int   $status if FILER_STATUS_FIRST: invoke hook_filer_FILER_NAME_first, if FILER_STATUS_LAST invoke hook_filer_FILER_NAME_last and rename to final file.
    * @return bool         FALSE on failure.
    */
-  public function run($frid, $item, $append = TRUE, $read = FALSE) {
-    return $this->write($frid, $item, $append, $read, FILER_STATUS_MANUAL);
+  public function run($frid, $item, $append = TRUE, $read = FALSE, $status = FILER_STATUS_NORMAL) {
+    return $this->write($frid, $item, $append, $read, FILER_STATUS_MANUAL | $status);
   }
 
   /**
@@ -248,40 +249,40 @@ class Filer {
    *
    * @private
    */
-  public function _run($frid, $item, $status, $append = TRUE, $read = FALSE) {
+  public function _run($frid, $item, $append = TRUE, $read = FALSE, $status = FILER_STATUS_NORMAL) {
     $this->write($frid, $item, $append, $read, $status);
   }
 
   /**
-   * Passes the item, content (if requested), filehandle and the queue status to hook_filer_FILER_NAME_cron()
+   * Passes the item, content (if requested), filehandle and the queue status to hook_filer_FILER_NAME()
    * (and hook_filer_FILER_NAME_first or hook_filer_FILER_NAME_last depending on $status)
    * and writes the return value (if any) to the file.
    *
-   * @param int    $frid   Filer id.
-   * @param mixed  $item   Single item to pass to hook_filer_FILER_NAME_cron($item, ...).
-   * @param bool   $append TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
-   * @param bool   $read   Read the file prior to writing and pass the contents to the hooks.
-   * @param string $status Status of the current file:
+   * @param int   $frid   Filer id.
+   * @param mixed $item   Single item to pass to hook_filer_FILER_NAME($item, ...).
+   * @param bool  $append TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
+   * @param bool  $read   Read the file prior to writing and pass the contents to the hooks.
+   * @param int   $status Status of the current file:
    *                       -  FILER_STATUS_FIRST: first item (hook_filer_FILER_NAME_first will also be invoked),
    *                       -  FILER_STATUS_LAST: last item (hook_filer_FILER_NAME_last will also be invoked
    *                       -                                and hook_filer_FILER_NAME_finished when the filewriting has stopped
    *                       -                                and the file has been renamed),
    *                       -  FILER_STATUS_MANUAL: non-queued or
-   *                       -  An empty string: anything in between.
+   *                       -  FILER_STATUS_NORMAL: anything in between.
    * @return bool
    */
-  private function write($frid, $item, $append, $read, $status) {
-    $hook = 'filer_' . $this->name . '_cron';
+  private function write($frid, $item, $append, $read, $status = FILER_STATUS_NORMAL) {
+    $hook = 'filer_' . $this->name;
     $modules = module_implements($hook);
 
     if (empty($modules)) {
       return FALSE;
     }
     $filer_row = $this->files($frid);
-    if (empty($filer_row) || (!empty($filer_row['queued']) && $status === FILER_STATUS_MANUAL)) {
+    if (empty($filer_row) || (!empty($filer_row['queued']) && $status & FILER_STATUS_MANUAL)) {
       return FALSE;
     }
-    $fn = $filer_row['file'] . ($status !== FILER_STATUS_MANUAL ? self::TEMP_EXT : '');
+    $fn = $filer_row['file'] . self::TEMP_EXT;
     $dir = dirname($fn);
     if (!file_prepare_directory($dir, FILE_CREATE_DIRECTORY | FILE_MODIFY_PERMISSIONS)) {
       watchdog('filer', 'Could not prepare directory (%path)', array('%path' => $dir));
@@ -299,24 +300,21 @@ class Filer {
       'frid' => $frid,
     );
 
-    if ($status === FILER_STATUS_FIRST) {
+    if ($status & FILER_STATUS_FIRST) {
       $first_hook = 'filer_' . $this->name . '_first';
       $first_modules = module_implements($first_hook);
       $this->invoke($first_modules, $first_hook, $append, $read, $fn, $item, $info);
     }
     $this->invoke($modules, $hook, $append, $read, $fn, $item, $info);
-    if ($status === FILER_STATUS_LAST) {
+    if ($status & FILER_STATUS_LAST) {
       $last_hook = 'filer_' . $this->name . '_last';
       $last_modules = module_implements($last_hook);
       $this->invoke($last_modules, $last_hook, $append, $read, $fn, $item, $info);
     }
 
-    if (in_array($status, array(FILER_STATUS_MANUAL, FILER_STATUS_LAST))) {
+    if ($status & FILER_STATUS_LAST) {
+      $this->finish($frid);
       $this->sync();
-    }
-
-    if (in_array($status, array(FILER_STATUS_MANUAL, FILER_STATUS_LAST))) {
-      $this->finish($frid, $status !== FILER_STATUS_MANUAL);
       $finished_hook = 'filer_' . $this->name . '_finished';
       $finished_modules = module_implements($finished_hook);
       foreach ($finished_modules as $module) {
@@ -362,11 +360,10 @@ class Filer {
    *                  - and merge identical rows into 1 (given they're all finished and their uri is the same).
    *
    * @param int  $frid  Filer id.
-   * @param bool $temp  If TRUE rename file.tmp to file.
    */
-  private function finish($frid, $temp = TRUE) {
+  private function finish($frid) {
     $row = $this->files($frid);
-    if ($temp && !rename($row['file'] . self::TEMP_EXT, $row['file'])) {
+    if (!rename($row['file'] . self::TEMP_EXT, $row['file'])) {
       watchdog('filer', 'could not rename %file to %nfile', array('%file' => $row['file'] . self::TEMP_EXT, '%nfile' => $row['file']));
       return;
     }
