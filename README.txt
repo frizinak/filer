@@ -142,4 +142,4 @@ function hook_filer_example_two_finished($info) {
 ?>
 
 
-Sponsored by [wieni](http://wieni.be).
+Sponsored by http://wieni.be.
