@@ -15,9 +15,9 @@ class Filer {
   /**
    * Fetches all Filer names.
    *
-   * @param bool        $finished   Include name even if all tasks within that filer are completed.
-   * @param bool        $nonQueued  Include names of non-queued tasks.
-   * @param string|bool $uri        Only return names of tasks that have a specific $uri, FALSE to ignore.
+   * @param bool        $finished  Include name even if all tasks within that filer are completed.
+   * @param bool        $nonQueued Include names of non-queued tasks.
+   * @param string|bool $uri       Only return names of tasks that have a specific $uri, FALSE to ignore.
    * @return Array
    */
   public static function getNames($finished = FALSE, $nonQueued = FALSE, $uri = FALSE) {
@@ -47,7 +47,7 @@ class Filer {
   }
 
   /**
-   * @param string $name  Filer name.
+   * @param string $name Filer name.
    *
    * @throws ErrorException if $name is a non-empty string.
    */
@@ -81,13 +81,13 @@ class Filer {
   }
 
   /**
-   * @param string $uri     Stream wrapper URI
-   * @param array  $options Optional: array indexed as follows:
+   * @param string $uri      Stream wrapper URI
+   * @param array  $options  Optional: array indexed as follows:
    *                         - items   Array   Each item is passed to hook_filer_FILER_NAME($item, $fh, $info).
    *                         - append  bool    Whether to append or overwrite the contents of $uri on each callback.
    *                         -                 e.g. CSV: append => TRUE, JSON: append => FALSE.
    *                         - read    bool    Whether to pass the contents of the file to hook_filer_FILER_NAME($item, $fh, $info).
-   * @param bool   $enqueue If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME().
+   * @param bool   $enqueue  If TRUE DrupalQueue will take care of calling hook_filer_FILER_NAME().
    *                         - Otherwise manual calling of Filer::run() is required to fill our file.
    *                         - @Note: if FALSE $options will be ignored.
    * @return bool|int       Filer id on success, FALSE on failure.
@@ -104,7 +104,7 @@ class Filer {
       watchdog('filer', 'Invalid arguments passed to Filer::add().');
       return FALSE;
     }
-    $options = (array)$options;
+    $options = (array) $options;
     $options += array('items' => array(), 'append' => TRUE, 'read' => TRUE);
 
     if (!$frid = $this->addRow($uri, $enqueue)) {
@@ -118,10 +118,13 @@ class Filer {
       $i = 0;
       foreach ($options['items'] as $item) {
         $i++;
+        $status = FILER_STATUS_NORMAL;
+        $status |= $i == $item_count ? FILER_STATUS_LAST : 0;
+        $status |= $i == 1 ? FILER_STATUS_FIRST : 0;
         $q->createItem(array(
           'name' => $this->name,
           'frid' => $frid,
-          'status' => $i == $item_count ? FILER_STATUS_LAST : ($i == 1 ? FILER_STATUS_FIRST : FILER_STATUS_NORMAL),
+          'status' => $status,
           'read' => $options['read'],
           'append' => $options['append'],
           'item' => $item,
@@ -134,7 +137,7 @@ class Filer {
   /**
    * Delete a file from both db and the filesystem.
    *
-   * @param int $frid   The Filer id.
+   * @param int $frid The Filer id.
    * @return bool       TRUE if the file was deleted from the filesystem or did not exist, FALSE otherwise.
    */
   public function delete($frid) {
@@ -150,7 +153,7 @@ class Filer {
   }
 
   /**
-   * @param bool $finishedOnly    Only delete finished files, if FALSE: delete all and clear this Filers queue.
+   * @param bool $finishedOnly Only delete finished files, if FALSE: delete all and clear this Filers queue.
    * @return bool                 FALSE if we were unable to delete any of the files, TRUE otherwise @see Filer::delete().
    */
   public function deleteAll($finishedOnly = TRUE) {
@@ -171,8 +174,8 @@ class Filer {
   /**
    * Get a list of all files, or the file specified by $frid
    *
-   * @param int  $frid    The Filer id.
-   * @param bool $reset   Reset the drupal_static cache.
+   * @param int  $frid  The Filer id.
+   * @param bool $reset Reset the drupal_static cache.
    * @return mixed        If $frid was specified: single db-row array, otherwise an array of db-row arrays.
    */
   public function files($frid = NULL, $reset = FALSE) {
@@ -181,8 +184,8 @@ class Filer {
     }
     if (!isset($results) || $reset) {
       $qry = db_select('filer', 'f')
-        ->fields('f', array('frid', 'name', 'file', 'finished', 'queued'))
-        ->condition('f.name', $this->name);
+             ->fields('f', array('frid', 'name', 'file', 'finished', 'queued'))
+             ->condition('f.name', $this->name);
       if (isset($frid)) {
         return $qry->condition('f.frid', $frid)->execute()->fetchAssoc();
       }
@@ -258,11 +261,11 @@ class Filer {
    * (and hook_filer_FILER_NAME_first or hook_filer_FILER_NAME_last depending on $status)
    * and writes the return value (if any) to the file.
    *
-   * @param int   $frid   Filer id.
-   * @param mixed $item   Single item to pass to hook_filer_FILER_NAME($item, ...).
-   * @param bool  $append TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
-   * @param bool  $read   Read the file prior to writing and pass the contents to the hooks.
-   * @param int   $status Status of the current file:
+   * @param int   $frid    Filer id.
+   * @param mixed $item    Single item to pass to hook_filer_FILER_NAME($item, ...).
+   * @param bool  $append  TRUE: fopen(..., 'a'), FALSE: fopen(..., 'w').
+   * @param bool  $read    Read the file prior to writing and pass the contents to the hooks.
+   * @param int   $status  Status of the current file:
    *                       -  FILER_STATUS_FIRST: first item (hook_filer_FILER_NAME_first will also be invoked),
    *                       -  FILER_STATUS_LAST: last item (hook_filer_FILER_NAME_last will also be invoked
    *                       -                                and hook_filer_FILER_NAME_finished when the filewriting has stopped
@@ -301,8 +304,11 @@ class Filer {
     );
 
     if ($status & FILER_STATUS_FIRST) {
+      watchdog('filer', 'first', array());
+
       $first_hook = 'filer_' . $this->name . '_first';
       $first_modules = module_implements($first_hook);
+      watchdog('filer', 'first', $first_modules);
       $this->invoke($first_modules, $first_hook, $append, $read, $fn, $item, $info);
     }
     $this->invoke($modules, $hook, $append, $read, $fn, $item, $info);
@@ -329,18 +335,19 @@ class Filer {
    * If $read = TRUE the entire file will be read and updated in $info['content'];
    * We use file_get_contents to avoid any discrepancy caused when a hook manually writes to the file instead of returning a string.
    *
-   * @param array  $modules  Array of module names.
-   * @param string $hook     Hook to invoke on every module in $modules
-   * @param bool   $append   Boolean indicating what mode to open the file in.
-   * @param bool   $read     Boolean indicating whether to read the file after every write.
-   * @param string $fn       Filename
-   * @param mixed  $item     @see Filer::write().
-   * @param array  $info     @see Filer::write().
+   * @param array  $modules Array of module names.
+   * @param string $hook    Hook to invoke on every module in $modules
+   * @param bool   $append  Boolean indicating what mode to open the file in.
+   * @param bool   $read    Boolean indicating whether to read the file after every write.
+   * @param string $fn      Filename
+   * @param mixed  $item    @see Filer::write().
+   * @param array  $info    @see Filer::write().
    */
   private function invoke($modules, $hook, $append, $read, $fn, $item, &$info) {
     foreach ($modules as $module) {
       if ($fh = fopen($fn, $append ? 'a' : 'w')) {
-        $content = (string)module_invoke($module, $hook, $item, $fh, $info);
+
+        $content = (string) module_invoke($module, $hook, $item, $fh, $info);
         if (!empty($content) && fwrite($fh, $content) === FALSE) {
           watchdog('filer', 'could not write to %file', array('%file' => $fn));
         }
@@ -359,7 +366,7 @@ class Filer {
    * Finishes the file: rename temporary file to permanent file if necessary
    *                  - and merge identical rows into 1 (given they're all finished and their uri is the same).
    *
-   * @param int  $frid  Filer id.
+   * @param int $frid Filer id.
    */
   private function finish($frid) {
     $row = $this->files($frid);
@@ -377,12 +384,12 @@ class Filer {
   /**
    * Adds a row to the filer table.
    *
-   * @param string $uri     Stream wrapper uri.
-   * @param bool   $queued  Mark this task as queued.
+   * @param string $uri    Stream wrapper uri.
+   * @param bool   $queued Mark this task as queued.
    * @return bool|int       Filer id on success, FALSE on failure.
    */
   private function addRow($uri, $queued) {
-    $insert = array('name' => $this->name, 'file' => $uri, 'queued' => (int)$queued);
+    $insert = array('name' => $this->name, 'file' => $uri, 'queued' => (int) $queued);
     $frid = db_insert('filer')->fields($insert)->execute();
     $this->files(NULL, TRUE);
     if (is_null($frid)) {
@@ -395,7 +402,7 @@ class Filer {
   /**
    * Deletes a row from the filer table.
    *
-   * @param int $frid   Filer id.
+   * @param int $frid Filer id.
    */
   private function deleteRow($frid) {
     db_delete('filer')->condition('frid', $frid)->condition('name', $this->name)->execute();
